@@ -20,7 +20,7 @@ It is organised in seven parts:
 | IV — Intelligence | 19–23 | Correlation, attack paths, risk, change, blast radius. |
 | V — AI Security | 24–29 | How the AI-specific capabilities actually work. |
 | VI — Action | 30–31 | Response and Break Attack Path. |
-| VII — Operations | 32–38 | Investigation UX, deployment, updates, scale, self-security, open decisions. |
+| VII — Operations | 32–38 | Investigation UX, self-security, product surfaces, scale, open decisions, pre-mortem, build model. |
 
 Chapters 8, 20, 27 and 32 contain the four **end-to-end traces** — a single piece of data followed from source to screen. If you only read four chapters, read those.
 
@@ -1690,12 +1690,12 @@ Conditions must survive the trip. An edge that only exists from a specific IP ra
 Naïve all-pairs traversal on 120M edges is intractable and unnecessary. The practical approach is **backwards from crown jewels**, which is both faster and better aligned with what users want:
 
 ```
-  PHASE 1 — Precompute closure for expensive predicates
+  STEP 1 — Precompute closure for expensive predicates
     MEMBER_OF and CAN_ASSUME are transitive and dense.
     Materialize their transitive closure incrementally on change,
     not on query. This is 80% of the traversal cost.
 
-  PHASE 2 — Reverse BFS from crown jewels
+  STEP 2 — Reverse BFS from crown jewels
     for each crown_jewel:
         frontier = {crown_jewel}
         for depth in 1..MAX_DEPTH (default 8):
@@ -1705,13 +1705,13 @@ Naïve all-pairs traversal on 120M edges is intractable and unnecessary. The pra
             record predecessors
         emit paths where the terminal node is a START CONDITION
 
-  PHASE 3 — Score and rank        (Chapter 21)
+  STEP 3 — Score and rank        (Chapter 21)
 
-  PHASE 4 — Collapse
+  STEP 4 — Collapse
     Group paths sharing a choke point. Present the choke point,
     not the 400 paths through it.
 
-  PHASE 5 — Diff against previous run
+  STEP 5 — Diff against previous run
     NEW / PERSISTING / RESOLVED. Only NEW generates a notification.
 ```
 
@@ -2765,43 +2765,102 @@ An honest pre-mortem. Each of these has killed a comparable product.
 
 5. **De-tokenization friction.** If analysts cannot see names easily, they will not use the product. *Mitigation:* build the browser-to-Edge resolve path in v1, not v3; make degraded mode genuinely usable; solve the remote-analyst case explicitly (DMZ Edge or customer-hosted relay).
 
-6. **Scope explosion.** Eight domains, 25 components, one team. *Mitigation:* Chapter 1.4 and the phasing below. Re-read them whenever a roadmap meeting adds a domain.
+6. **Scope explosion.** Eight domains, 25 components, one team. *Mitigation:* Chapter 1.4 and the five findings in 38.4. Re-read them whenever a roadmap meeting adds a domain.
 
 7. **The AI Gateway's deployment friction** being underestimated, consuming quarters, and delivering a commodity DLP feature. *Mitigation:* SWG integration and SDK first; treat the inline proxy as a later, optional mode.
 
 ---
 
-## 38. Phasing
+## 38. Build model
 
-The full architecture is a multi-year, large-team platform. This is how to get there while shipping something valuable early.
+Overlook is built as **one system, in one program of work**. There are no delivery phases, no wedge release, and no capability held back for a later stage. The architecture is designed so that parallel tracks can proceed simultaneously against stable contracts, and the sequencing that does exist is dependency ordering measured in weeks of lead time, not roadmap stages measured in quarters.
 
-### Phase 1 — The wedge (target: 6 months)
+### 38.1 What makes parallel construction possible
 
-**Build:** Edge Node (collector + processor + state + control roles, single VM), the Security Fact contract, tokenization, entity resolution with the review queue, the Resolution Directory, connectors for AWS + Azure + Entra + Okta + AD + GitHub, permission closure for AWS and Azure, the graph in Postgres, reverse-BFS path engine with choke points, the SaaS console, and browser-to-Edge de-tokenization.
+Three contracts decouple the work. Once they are fixed, every track can proceed without waiting on the others:
 
-**AI capability:** AI inventory and AI agent discovery from cloud and repo connectors. The **AI Privilege Gap** finding. No agent, no gateway.
+```
+   THE SECURITY FACT SCHEMA (Ch. 5)
+      decouples the Collection Plane from the Intelligence Plane.
+      Connector authors and graph engineers never block each other.
 
-**Deliberately not built:** DSPM scanning, network flow ingestion, the Overlook Agent, the AI Gateway, response execution, on-prem-specific connectors beyond AD.
+   THE ENTITY MODEL AND PREDICATE VOCABULARY (Ch. 6)
+      decouples every connector from every other connector, and
+      decouples all of them from the attack path engine.
 
-**Why this cut:** every connector is API-only, so a POC is a read-only role plus an IdP app registration, and first graph appears within a day. The hero finding needs no new infrastructure on the customer side. It is demonstrable in a 30-minute meeting.
+   THE COMMAND AND CONTENT ENVELOPES (Ch. 15, 17)
+      decouple the Edge Node from SaaS release cycles, and decouple
+      content (parsers, primitives, fingerprints) from code entirely.
+```
 
-### Phase 2 — Depth (target: +6 months)
+**These three must exist before anything else is built.** They are the only true prerequisite in the system, and they are a matter of weeks, not quarters.
 
-Thin Overlook Agent for local AI, MCP, and IDE assistant discovery. Shadow AI via SWG/CASB integration. DSPM classification for cloud object storage and managed databases. Network reachability from cloud constructs and firewall configs. Response as *recommend-only*, plus Break Attack Path with graph simulation. GCP. On-prem connectors.
+### 38.2 The parallel tracks
 
-### Phase 3 — The AI platform (target: +6 months)
+```
+  PLATFORM        Edge Node runtime — the five roles, transport,
+                  enrollment, credential vault, local UI, sync,
+                  offline buffering, health
 
-AI Gateway in reverse-proxy and SDK modes. Prompt security with local inspection. Tool-call and MCP runtime visibility. RAG security. Full agent behavioural analysis. Response *execution* through the full signed chain.
+  CONNECTORS      the framework and the fleet
+                  (see 03-connectors.md — five sub-tracks, 118 connectors)
 
-### Phase 4 — Scale
+  GRAPH           entity resolution, Resolution Directory, tokenization,
+                  the bitemporal graph, coverage windows, change feed
 
-Purpose-built graph engine, multi-Edge HA, MSSP multi-tenancy, cross-tenant intelligence, compliance mapping, marketplace connectors.
+  IAM             permission closure per cloud, escalation primitive
+                  engine, directory depth, CIEM
+                  (see 02-iam-deep-dive.md)
 
-### The rule that keeps this honest
+  ANALYTICS       attack path engine, risk scoring, choke points,
+                  blast radius, graph simulation
 
-> Every phase must be independently sellable, and every phase must produce a finding no other tool in the customer's environment can produce.
+  AI              AI entity discovery, agent and MCP modelling,
+                  the AI Gateway, prompt inspection
 
-If a phase fails that test, it is engineering work, not product work, and it should be re-scoped.
+  ENDPOINT        the Overlook Agent — collection and response executor
+
+  RESPONSE        the signed command chain, approvals, impact preview,
+                  Break Attack Path
+
+  CONTENT         iam-semantics, escalation primitives, parsers,
+                  AI fingerprints, MCP reputation, classification patterns
+                  — ships independently of all code
+
+  EXPERIENCE      SaaS console, local UI, de-tokenization path,
+                  onboarding, investigation workspace
+```
+
+### 38.3 The lead-time dependencies
+
+Not sequencing — lead times. Each is a matter of a few weeks of head start, not a gate that stops other work.
+
+```
+   Contracts (38.1)         must lead everything                ~4 weeks
+   Connector framework      must lead the connector fleet       ~6 weeks
+   Entity resolution        must lead the path engine           ~4 weeks
+   Permission closure       must lead escalation primitives     ~4 weeks
+   Security Fact + graph    must lead the SaaS console          ~4 weeks
+   Agent transport          must lead response execution        ~6 weeks
+
+   Everything else runs concurrently.
+```
+
+### 38.4 The rule that keeps it honest
+
+> Every track must produce something that contributes to a finding no other tool in the customer's environment can produce. Work that only makes the platform more capable, without changing what the customer can learn, is infrastructure — necessary, but never the measure of progress.
+
+The five findings the whole system exists to produce:
+
+```
+  1. AI PRIVILEGE GAP     user privilege < agent privilege, reaching a crown jewel
+  2. ESCALATION TO ADMIN  a synthesized path that no policy declares
+  3. HYBRID PATH          on-prem AD -> Entra -> cloud -> production data
+  4. CHOKE POINT          one policy line, thousands of paths
+  5. RIGHTSIZE            340 permissions granted, 12 used, policy attached
+```
+
+If a piece of work does not eventually serve one of those five, it should be challenged.
 
 ---
 
@@ -2818,7 +2877,7 @@ If a phase fails that test, it is engineering work, not product work, and it sho
 | AI Gateway as a deployment tier | Four modes; SWG/SDK before inline proxy | Re-sequenced |
 | Change Intelligence (one line) | Bitemporal graph with coverage windows | Specified |
 | 25 components | One product (the graph) with capability areas | Reframed |
-| No phasing | Four phases, wedge-first | **Added** |
+| No build model | One program, parallel tracks on fixed contracts | **Added** |
 | No content pipeline | Signed content bundles with staged rollout | **Added** |
 | No multi-tenancy or scale model | Specified with planning numbers | **Added** |
 

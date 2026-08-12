@@ -38,7 +38,7 @@ This document specifies that layer.
 | B — Escalation | 7–12 | Escalation primitives as synthesized edges: AWS, Azure, GCP, Kubernetes, federation |
 | C — Directories | 13–15 | Active Directory graph depth, Entra ID, standing vs eligible privilege |
 | D — Dynamics | 16–19 | ABAC/conditional edges, non-human identity lifecycle, secrets as identity, CIEM |
-| E — Output | 20–24 | Findings catalog, remediation, confidence, connector implications, revised phasing |
+| E — Output | 20–24 | Findings catalog, remediation, confidence, connector implications, what the layer must deliver |
 
 ---
 
@@ -1719,38 +1719,47 @@ That is the argument to carry into the connector discussion.
 
 ---
 
-## 24. Revised phasing
+## 24. What the IAM layer must deliver
 
-The IAM depth described here changes the phase plan in the system design.
+The IAM layer is built as one body of work, not staged. Everything below is in scope from the start, because each piece is load-bearing for the graph's *correctness* — and a graph that is broad but wrong is worse than one that is narrow and true.
 
-### Phase 1 — must now include
-
-```
-  + AWS + Azure + GCP effective permission closure
-  + escalation primitive engine with the AWS and Azure catalogs
-  + Entra ID depth: app registrations, SPs, Graph permissions,
-    ownership, the elevateAccess bridge
-  + Active Directory: ACLs, delegation (all three), nested groups,
-    shadow admins
-  + granted / effective / used, with CIEM rightsizing
-  + provider simulation verification for high-value edges
-  + confidence model, published
-```
-
-This is a larger Phase 1 than the system design proposed, and it should be, because it is the phase that determines whether the graph is *true*. Everything else — the agent, the gateway, DSPM, network — adds breadth to a graph whose spine must already be correct.
-
-### What can move later
+### 24.1 The correctness spine
 
 ```
-  - GCP escalation catalog (after AWS and Azure)
-  - AD CS
-  - Kubernetes RBAC (Phase 2, with the K8s connector)
-  - ABAC conditional expansion (Phase 2)
-  - full NHI lifecycle management (Phase 2)
-  - AD collection via existing BloodHound output (Phase 2, cheap)
+  effective permission closure for AWS, Azure and GCP
+  escalation primitive engine + catalogs (AWS, Azure, GCP, Kubernetes)
+  Entra ID depth: app registrations, SPs, Graph permissions,
+      ownership, Conditional Access, the elevateAccess bridge
+  Active Directory: ACLs, all three delegation types, AD CS,
+      GPO, nested groups, shadow admins
+  granted / effective / used, with CIEM rightsizing
+  PIM standing vs eligible privilege
+  ABAC conditional capabilities
+  non-human identity lifecycle
+  secrets as identity edges
+  provider simulation verification for high-value edges
+  the published confidence model
 ```
 
-### The revised Phase 1 hero findings
+None of these is optional and none is deferrable, because each one, if absent, produces **silent false negatives** — attack paths that exist in the customer's environment and not in the graph. A missing connector is a visible gap that coverage reporting will show. A missing escalation primitive is an invisible one.
+
+### 24.2 The lead-time ordering
+
+The only sequencing that exists inside the IAM layer is dependency lead time, measured in weeks:
+
+```
+   capability schema + action-group mapping   leads everything      ~3 weeks
+   permission closure per cloud               leads escalation      ~4 weeks
+   canonical keys + Resolution Directory      leads all connectors  ~4 weeks
+   effective permissions                      leads CIEM            ~2 weeks
+   closure + audit-log ingestion              leads the used state  ~2 weeks
+
+   Directory work (AD, Entra), ABAC, NHI lifecycle and the secrets
+   bridge have no prerequisites beyond the capability schema and
+   proceed fully in parallel.
+```
+
+### 24.3 The five findings this layer exists to produce
 
 ```
   1. AI PRIVILEGE GAP        user < agent privilege, reaching a crown jewel
@@ -1760,7 +1769,7 @@ This is a larger Phase 1 than the system design proposed, and it should be, beca
   5. RIGHTSIZE               340 permissions granted, 12 used, policy attached
 ```
 
-Five findings. None of them available from any single tool the customer already owns. All of them computable from Tier-0 and Tier-1 connectors with no agent and no gateway.
+None is available from any single tool the customer already owns. All are computable from the foundation connector set with no endpoint agent and no AI gateway — they are pure consequences of a correct IAM graph.
 
 That is the product.
 
