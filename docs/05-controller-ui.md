@@ -2,7 +2,8 @@
 
 **Version:** 0.1 (design draft)
 **Date:** 2026-08-12
-**Companion to:** `01-system-design.md`, `03-connectors.md`, `04-data-flow-to-security-facts.md`
+**Companion to:** `01-system-design.md`, `03-connectors.md`, `04-data-flow-to-security-facts.md`, `11-how-stellar-cyber-works.md`
+**Revised:** 2026-08-13 — connector control plane updated against Stellar Cyber (Appendices A and B)
 **Status:** Brainstorming / architecture. No implementation.
 
 ---
@@ -25,6 +26,7 @@ The **Controller** is the appliance-local management plane: the UI and API that 
 | VIII | 26–27 | Identity, RBAC, and the two-identity problem |
 | IX | 28–29 | Non-functional reality and degraded mode |
 | X | 30 | Open questions |
+| A–B | — | Edit-or-redesign decision; how Stellar Cyber controls connectors |
 
 ---
 
@@ -239,6 +241,8 @@ Collector-level control is the one most often missing from products like this, a
    CONFIGURED         credentials present, not yet validated
    VALIDATING         test collection running
    ENABLED / HEALTHY  collecting, meeting success criteria
+   ENABLED / SILENT   authenticating fine, no errors, but NO DATA
+                      in 24h. The sneakiest failure of all — see 6.1
    ENABLED / DEGRADED collecting partially — some collectors failing,
                       partial enumeration, or reduced confidence
    ENABLED / STALE    last success outside the freshness threshold
@@ -252,7 +256,34 @@ Collector-level control is the one most often missing from products like this, a
    ARCHIVED           removed but history retained
 ```
 
-Thirteen states, five of which look like "off" to a naive UI. The operator's next action is completely different for each, so the UI must distinguish them — with distinct colour, distinct wording, and distinct available actions. Conflating "I turned this off" with "this broke" is how an operator loses trust in the whole panel.
+Fourteen states, five of which look like "off" to a naive UI. The operator's next action is completely different for each, so the UI must distinguish them — with distinct colour, distinct wording, and distinct available actions. Conflating "I turned this off" with "this broke" is how an operator loses trust in the whole panel.
+
+### 6.1 SILENT deserves its own state
+
+Borrowed from Stellar Cyber, which surfaces exactly this as amber: *"active but no data received in 24 hours."* (Appendix B.)
+
+```
+   Everything reports healthy. Credentials valid. No errors logged.
+   Zero records arriving.
+
+   CAUSES
+     a source-side permission was revoked without breaking auth
+     a filter or scope was narrowed upstream
+     the log source was repointed elsewhere
+     an account genuinely has no activity (a real, benign case)
+
+   WHY IT MATTERS
+     HEALTHY and SILENT look identical on every dashboard that only
+     checks "did the last run succeed?" The run succeeded. It
+     returned nothing. Coverage silently went to zero and the
+     exposure score improved for no reason.
+
+   SILENT is therefore evaluated against each collector's OWN
+   baseline, not against zero: "this collector normally returns
+   ~412 roles; today it returned 0" is the signal, and a collector
+   that legitimately returns nothing most days must be able to
+   declare that in its manifest.
+```
 
 ---
 
@@ -359,7 +390,8 @@ The "what it unlocks that you don't have today" block is computable — the mani
 ```
   CONNECTIONS                                    18 types · 71 instances
 
-  [ All ] [ Needs attention 4 ] [ Paused 3 ] [ Healthy 64 ]     [ ⏻ Stop all ]
+  [ All ] [ Needs attention 4 ] [ Paused 3 ] [ Healthy 64 ]
+  [ Test selected ]  [ Export CSV ]                            [ ⏻ Stop all ]
 
   ▼ aws                                    42 instances    ●39 ◐2 ✕1
     ┌──────────────────────────────────────────────────────────────┐
@@ -398,6 +430,75 @@ Notes on this design:
 - **The paused instance shows who paused it, when, and why.** A free-text reason is mandatory on pause. Six months later somebody will ask.
 - **Every failure row states the graph consequence** — "1,204 entities going stale" — not just "error."
 - **`⏻ Stop all`** is deliberately top-right and always present. During an incident or a change freeze, an operator needs one button that halts every outbound API call. It should require a typed confirmation and log loudly.
+- **`Run on`** is a column at instance level (omitted above for width). Under the hybrid archetype a customer has two Edge Nodes, and the operator must be able to see and change which one executes a given instance (`08 §6.2`).
+
+### 8.1 Per-instance actions
+
+```
+  [ Test ]              validate connectivity + auth WITHOUT editing.
+                        Standing action, not just an onboarding step.
+                        Selectable in bulk — test 10 instances at once
+                        after a credential rotation or firewall change.
+                        Result dialog PERSISTS until dismissed; an
+                        operator is reading it while fixing something.
+
+  [ Run now ]           force a collection outside the schedule.
+
+  [ View contribution ] ← the important one, see 8.2
+
+  [ Edit ]              scope, credentials, profile, cadence.
+  [ Pause ]             reason mandatory.
+  [ Reset cursor ]      force full re-enumeration next run.
+  [ Archive ]           remove, retain history.
+```
+
+### 8.2 "View contribution" — what this connector actually put in the graph
+
+Stellar Cyber has *View Events*: jump from a connector to the records it produced. The instinct is right and the graph version is stronger, because our answer is not a record count but a structural one.
+
+```
+  aws / account 123456789012 · CONTRIBUTION
+
+    ENTITIES        1,204 identities · 412 roles · 1,847 assets
+                    · 94 datastores
+    RELATIONSHIPS   8,412 CAN_ASSUME · 22,104 CAN_READ
+                    · 1,902 MEMBER_OF
+    SYNTHESIZED      41 escalation edges (via 6 primitives)
+    FINDINGS         14 open, 3 critical
+    UNIQUE           2,208 edges contributed by NO other connector
+                     → disabling this instance makes them disappear
+
+    CONFIDENCE      0.97 median
+    LAST FULL       04:03 today · coverage window emitted ✓
+    [ Browse these entities ]  [ Show what only this provides ]
+```
+
+**"Unique contribution" is the number that matters.** It answers the operator's real question — *does this connector still earn its place?* — and it is computed from the same manifest-derived dependency graph that drives the impact preview (Chapter 9). Same machinery, second use.
+
+### 8.3 Error surfacing
+
+Borrowed directly, because their approach is better than what this document originally proposed.
+
+```
+  ✕ BLOCKED_CREDENTIAL   aws / account 445566778899
+
+    HTTP 403  AccessDenied
+    "User: arn:aws:iam::4455:user/overlook-reader is not authorized
+     to perform: iam:ListRoles"
+
+    WHAT THIS MEANS
+      The reader role exists and authenticated, but is missing the
+      iam:ListRoles permission. Likely the least-privilege policy
+      was applied partially, or an SCP is denying it.
+
+    GRAPH CONSEQUENCE
+      1,204 entities going stale. NOTHING tombstoned — no coverage
+      window was emitted.
+
+    [ Copy the required policy ]  [ Retest ]  [ Pause this instance ]
+```
+
+Show the **raw code and vendor message** alongside our explanation. The raw string is what an operator pastes into a search engine or a ticket to their cloud team; a friendly paraphrase alone strips them of that. And the dialog stays open until dismissed.
 
 ---
 
@@ -1168,7 +1269,165 @@ The banner states specifically what does and does not work. A generic "connectio
       configuration (infrastructure-as-code for connector setup)?
       Enterprises will ask. It also risks becoming a second surface
       to maintain.
+
+  Q9  Which connector settings are IMMUTABLE after creation?
+      Stellar Cyber freezes "General options" once a connector exists,
+      almost certainly because changing them would orphan collected
+      data. We need the same rule. Candidates: connector type, the
+      account/scope identity, and the canonical-key strategy —
+      changing any of those re-partitions everything that instance
+      ever produced. Changing credentials, cadence, profile and
+      enabled collectors must all stay editable.
 ```
+
+---
+
+# APPENDIX A — Edit or redesign? (decided 2026-08-13)
+
+After examining Stellar Cyber's connector control UI in detail (Appendix B), the question was whether to revise this design or start again.
+
+**Decision: edit. Do not redesign.**
+
+```
+  WHY THE DESIGN HOLDS
+
+  Their UI is a flat table of ~86 connector instances. That is correct
+  for their product: one row per alert source, few instances per type,
+  and value measured in "is data flowing?"
+
+  Ours must handle 42 AWS ACCOUNT INSTANCES under one connector type,
+  each with 28 collectors, each scoped to regions (§5). A flat table
+  cannot express that, and no amount of column configuration fixes it.
+
+  The four-view split (Catalog / Connections / Coverage / Budget), the
+  four-level hierarchy, and the impact preview are all responses to a
+  problem their product does not have. They stay.
+```
+
+### What was WRONG in the original design, and is now fixed
+
+```
+  1  NO STANDING TEST ACTION
+     Validation existed only inside the onboarding wizard. An operator
+     rotating a credential or debugging a firewall change needs to test
+     an EXISTING instance without editing it — and to test ten at once.
+     → added §8.1
+
+  2  NO WAY TO SEE WHAT A CONNECTOR ACTUALLY PRODUCED
+     The original design showed health, coverage and freshness, but
+     never "what did this put in my graph?" That is the operator's
+     real question.
+     → added §8.2 View contribution, including UNIQUE contribution
+
+  3  ERRORS WERE PARAPHRASED, NOT SHOWN
+     "Error classification with remediation text" strips the operator
+     of the raw vendor string they need for a search engine or a
+     ticket to their cloud team.
+     → added §8.3: raw code AND explanation, dialog persists
+
+  4  NO SILENT STATE
+     Thirteen states, and none covered the sneakiest failure: healthy,
+     authenticating, zero data. HEALTHY and SILENT look identical to
+     any check that only asks "did the last run succeed?"
+     → added ENABLED/SILENT as a distinct state, evaluated against
+       each collector's own baseline (§6.1)
+
+  5  NO EXECUTION PLACEMENT IN THE UI
+     Doc 08 added it to the manifest; the UI never showed it. Under
+     the hybrid archetype every customer has two Edge Nodes.
+     → added the "Run on" column (§8)
+
+  6  NO CSV EXPORT
+     Trivial, and auditors ask for it every time.
+     → added to the Connections header
+
+  7  IMMUTABILITY UNDEFINED
+     Some settings cannot safely change after creation. Never stated.
+     → raised as Q9
+```
+
+### What we keep that they do not have
+
+```
+  ✓ four-level object model (type / instance / collector / scope)
+  ✓ impact preview before enable or disable — the differentiating idea
+  ✓ path-fragment analysis naming the exact missing connector
+  ✓ coverage as a first-class view and a growth mechanism
+  ✓ profiles with auto-adoption and visible override drift
+  ✓ budget and quota governance defaulting to 30% of customer quota
+  ✓ discovery-first catalog
+  ✓ 14 states rather than 4
+  ✓ the attention inbox as the landing surface
+```
+
+---
+
+# APPENDIX B — How Stellar Cyber controls connectors ✔
+
+Verified from their documentation, 2026-08-13. Recorded because it is the best available reference implementation of connector operations.
+
+### B.1 The table
+
+```
+  COLUMNS (user-configurable)
+    Name · Category · Content Type · Interval · Run On · Status
+    · Last Activity (timestamp of last successful activity)
+
+  Standard table behaviour: filter, sort, column selection with reset,
+  export to CSV (selected or all columns).
+```
+
+### B.2 Per-connector actions
+
+```
+  Edit             modify configuration — but GENERAL OPTIONS CANNOT
+                   BE CHANGED AFTER CREATION
+  Delete           removes connector and configuration immediately
+  Test             validate connectivity and authentication;
+                   one connector, or up to 10 in bulk, with progress
+                   and results in a dedicated dialog
+  View Events      jump to Threat Hunting filtered to that connector
+                   (not available for respond-only connectors)
+  Active/Inactive  toggle the Collect function without deleting
+```
+
+### B.3 Status model — four states, colour-coded
+
+```
+  GREEN  (0)  running / healthy
+  GRAY   (1)  disabled / inactive
+  RED    (2)  authentication failure, connectivity problem
+  AMBER  (3)  ACTIVE BUT NO DATA RECEIVED IN 24 HOURS   ← borrowed
+  RED    (4)  failed test
+
+  Hovering shows the detailed message.
+  HTTP codes are surfaced with explanations: 400, 401, 403, 404, 429.
+  The status dialog stays open for troubleshooting until closed.
+```
+
+### B.4 Configuration workflow
+
+```
+  Three steps:  SELECT type and attributes
+             →  CONFIGURE integration-specific settings
+             →  CONFIRM and submit
+
+  Ours is four (Scope → Credentials → Profile → Validate), because
+  scope selection across 42 accounts is a real step for us and not
+  for them.
+```
+
+### B.5 Health and metrics
+
+```
+  Connector statistics are written into the SENSOR MONITORING index
+  and queried through Threat Hunting with msgtype:40.
+  Metrics: event counts, byte sizes, API return codes.
+```
+
+**The interesting design choice.** Their connector telemetry goes *into the data lake* and is queried with the same tool used for hunting. Elegant — one query engine, no separate metrics stack.
+
+We cannot copy it directly, because we deliberately have no lake (`11 §7.1 X2`). Our equivalent: retain per-connector metrics as time series in Postgres, surfaced in the Controller and exportable to the customer's own monitoring. The principle worth keeping is that **connector telemetry should be queryable history, not just a current-state badge** — an operator debugging an intermittent failure needs to see the last 30 days, not the last run.
 
 ---
 
