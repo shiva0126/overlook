@@ -12,20 +12,24 @@
 They are the two closest shipped analogues to parts of what Overlook proposes, and they fail in opposite directions:
 
 ```
-   GOOGLE SecOps (Chronicle)
+   GOOGLE SecOps (Chronicle)  + Security Command Center
      solved: normalization at planetary scale, parser economics,
-             non-volumetric pricing, entity aliasing
-     did not attempt: local processing, data residency, privacy boundary
-     → validates our PIPELINE. Says nothing about our PRIVACY claim.
+             non-volumetric pricing, entity resolution and aliasing,
+             data residency, and — in SCC — attack paths, toxic
+             combinations and chokepoints across GCP and AWS
+     did not attempt: local processing, any privacy boundary,
+             on-prem directory depth, AI agent identity
+     → validates our PIPELINE. Contests our GRAPH.
+       Leaves only the BLINDNESS claim untouched.
 
    STELLAR CYBER (Open XDR)
      solved: distributed sensors + central processor, edge filtering,
              multi-tenancy from day one, regional data residency
-     did not attempt: exposure graph, attack paths, relationship modelling
-     → challenges our PRIVACY claim. Says nothing about our GRAPH.
+     did not attempt: exposure graph, attack paths, permission modelling
+     → contests our EDGE story. Says nothing about our GRAPH.
 ```
 
-Neither builds an exposure graph. Both have shipped infrastructure we are proposing to build.
+Between them they have shipped most of the infrastructure Overlook proposes. The survey's value is in identifying precisely what they have *not* shipped — which turns out to be narrower than the earlier drafts assumed.
 
 ---
 
