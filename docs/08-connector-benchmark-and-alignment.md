@@ -201,10 +201,10 @@ Doc 03 proposed 118 connectors and 695 collectors. Against a depth strategy, tha
       Our separate read and response roles (03 §9) are correct
       and should stay separate in credentials and manifests.
 
-  T5  MULTI-TENANCY LIVES IN THE CONNECTOR CONFIG.
+  T5  MULTI-TENANCY LIVES IN THE CONNECTOR CONFIG — BUT NOT FOR US.
       Tenant is a primary field on every Stellar Cyber connector.
-      If MSSP is ever a channel, this must be designed in now,
-      not retrofitted. Still unanswered (06 C3, 07 Q3).
+      RESOLVED 2026-08-13: Overlook is multi-INSTANCE (one appliance
+      per customer), so no tenant field is required. See doc 09.
 
   T6  EXECUTION PLACEMENT IS A CONNECTOR-LEVEL FIELD.
       They let the operator pick which Data Processor runs a
@@ -284,10 +284,14 @@ connector:
                                     # response capability is a SEPARATE
                                     # manifest with separate credentials
 
-  # NEW — multi-tenancy, if MSSP is ever a channel (T5)
-  tenant_scoped: true
+  # RETRACTED 2026-08-13 — tenant_scoped is NOT needed.
+  # Overlook is multi-INSTANCE, not multi-tenant: one appliance per
+  # customer, physical isolation. There is no tenant concept inside
+  # the pipeline. See 09-deployment-and-tenancy-model.md §2.
 
   # NEW — execution placement for multi-Edge deployments (T6)
+  # MORE relevant under the MSSP model: Archetype 3 (hybrid) deploys
+  # two Edge Nodes per customer, on-prem and cloud.
   execution: { placement: any }     # any | pinned:<edge_node_id>
 
   collectors:
@@ -385,8 +389,8 @@ Revised against the feasible options in `07 §5`.
 
 ```
   Q1  Adopt OCSF for event/finding classes? (recommended yes)
-  Q2  Is MSSP a channel? Determines tenant_scoped in the manifest,
-      and this is the third document asking.
+  Q2  RESOLVED — MSSP with single-tenant per-customer deployments.
+      No tenant_scoped field needed. See doc 09.
   Q3  Should doc 03's headline number be restated from 118 to
       "a framework plus 6 deep connectors, with 118 as the map"?
   Q4  Verify Wiz's and XM Cyber's actual connector counts and

@@ -1459,14 +1459,36 @@ Ship A and D first. They cover the traffic that produces the differentiated find
                     +--------------------------------+
 ```
 
-### 14.2 Multi-tenancy
+### 14.2 Tenancy: multi-instance, not multi-tenant
 
-Given the customer profile — regulated enterprises that chose Overlook *for* its privacy architecture — tenancy isolation must be stronger than the industry norm.
+**Decision taken 2026-08-13 — see `09-deployment-and-tenancy-model.md`.**
 
-- **Data isolation:** separate schema per tenant, minimum. Separate database for large or regulated tenants. Never a shared table with a `tenant_id` column; one missing `WHERE` clause is a cross-customer breach, and this customer base will not forgive it.
-- **Compute isolation:** attack-path computation is expensive and bursty. Run it in per-tenant workers with hard resource caps so one customer's 120M-edge graph cannot starve another's.
-- **Key isolation:** every tenant's data encrypted with a tenant-specific key.
-- **Region residency:** the SaaS control plane must be deployable per region (EU, India, US, Gulf) with no cross-region data flow. Given the target market, this is a launch requirement, not a later one.
+Overlook operates as an MSSP, but **each customer receives a dedicated, single-tenant deployment** on their own premises or in their own cloud. One appliance serves one customer, always.
+
+```
+   NOT THIS                          THIS
+   one deployment, N customers       N deployments, one customer each
+   logical isolation                 PHYSICAL isolation
+   tenant_id on every query          no tenant concept in the pipeline
+   one missing WHERE = breach        no cross-customer query path exists
+```
+
+What this removes from the architecture:
+
+- No per-tenant schema separation inside an appliance — there is nothing to separate.
+- No tenant-aware query paths, RBAC, or resource governance in the pipeline.
+- No noisy-neighbour class of problem.
+- **No cross-customer breach class of vulnerability at all.**
+
+What it adds — and what must be built instead:
+
+- **The MSSP console.** One SaaS console across all customer deployments, holding **tokens only**. Cross-customer health, coverage, finding counts and structural comparison are all computable on tokens, because the analysis is structural rather than content-based.
+- **Per-customer de-tokenization.** An MSSP analyst sees plaintext for a customer only if they can reach *that customer's* Edge Node and that customer's local RBAC permits it. The customer controls what their own service provider can see. A compromise of the MSSP console exposes token graphs and nothing else.
+- **A fleet plane** for provisioning, monitoring, updating and diagnosing N appliances — with the hard constraint that remote diagnostics must work without receiving customer data.
+
+**Region residency** still applies to the token graph: the SaaS control plane should be deployable per region (EU, India, US, Gulf), because some regulators care where derived data sits even when it holds no plaintext.
+
+Deployment is shaped by each customer's infrastructure — five archetypes, from cloud-only to segmented/regulated — and the connector catalog is fully browsable while only what the customer actually runs is deployed. Both are specified in `09 §4` and `09 §5`.
 
 ### 14.3 What SaaS provides that the Edge cannot
 
