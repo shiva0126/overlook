@@ -75,8 +75,8 @@ Every connector takes roughly the same shape:
 
 Two things to note:
 
-- **Tenant is a first-class field on every connector.** Multi-tenancy is not bolted on; it is in the connector's primary configuration. This is what "built in from inception" actually looks like in practice, and it is a warning about how expensive retrofitting would be (`06 C3`).
-- **"Device/DP selection"** — the operator chooses *which processor* runs the connector. Their distributed model exposes execution placement in the connector config. If Overlook ever supports multiple Edge Nodes per tenant, the same field becomes necessary.
+- **Tenant is a first-class field on every connector.** Multi-tenancy is not bolted on; it is in the connector's primary configuration. This is what "built in from inception" actually looks like — and it shows the cost we avoid entirely by going multi-instance instead (`09 §2`).
+- **"Device/DP selection"** — the operator chooses *which processor* runs the connector. Their distributed model exposes execution placement in the connector config. Overlook needs the same field: the hybrid archetype (`09 §4`) deploys two Edge Nodes per customer.
 
 ### 2.3 How they build connectors ✔
 
