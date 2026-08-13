@@ -68,7 +68,66 @@ The distinction that was buried in the earlier documents, and the reason the que
 
 The trade is favourable. Logical isolation is a permanent correctness burden carried in every query; physical isolation is a one-time operational burden carried at deployment. For a small team, the second is far cheaper and far safer.
 
-### 2.1 It also strengthens the one claim that survived
+### 2.1 So where does `tenant_id` go? Nowhere.
+
+Asked directly on 2026-08-13: *if we deploy one appliance per customer, why carry a tenant identifier at all?* The answer is that we should not, and the schemas have been corrected.
+
+```
+   REMOVED
+     tenant_id from the Security Fact schema        (01 §5.2)
+     tenant_id from the fact merge key              (01 §5.5, 04 §20)
+     tenant_id from the TrustGraph node schema      (01 §9.1)
+     tenant_scoped from the connector manifest      (08 §6.2)
+
+   WHY IT WAS NEVER NEEDED
+     Inside the appliance, every entity, edge and fact belongs to one
+     customer by construction. A discriminator that always holds the
+     same value is not a discriminator — it is redundant bytes on every
+     record and, worse, an invitation to build tenant-aware query paths
+     we have deliberately designed out.
+
+   WHAT REPLACES IT AT THE BOUNDARY
+     The mTLS client certificate on the sync channel. The authenticated
+     connection already establishes which deployment is talking. A fact
+     does not need to assert what the channel has already proven.
+     deployment_id therefore appears in the BATCH HEADER and the
+     enrollment certificate — once per batch, not once per fact.
+
+   AND ON THE SaaS SIDE
+     Each customer's graph is a SEPARATE STORE. Physical isolation
+     continues into the console: there is no shared table needing a
+     discriminator column, and therefore no missing-WHERE-clause class
+     of bug. The console routes to the right store based on which
+     customer the analyst has selected.
+```
+
+### 2.2 But the per-customer KEY stays — for a different reason
+
+One thing that looks like tenancy is not, and must survive: the tokenization key.
+
+```
+   token = HMAC-SHA256( deployment_key, canonical_key )
+
+   The key is per-customer, but NOT because of multi-tenancy.
+   It exists because:
+
+     1. THE CUSTOMER HOLDS IT.  It is generated at enrollment, wrapped
+        by the customer's KMS/HSM, and never transmitted to us. That is
+        the entire mechanism behind "residency is not blindness"
+        (01 §2.3). Without a customer-held key there is no claim.
+
+     2. ONE CUSTOMER MAY HAVE SEVERAL EDGE NODES.  The hybrid archetype
+        (§4, Archetype 3) deploys one on-prem and one in cloud. Both
+        must produce the SAME token for the same entity or the graph
+        fragments and the hybrid attack path — the reason the customer
+        bought the product — becomes invisible.
+
+   So it was renamed: tenant_key -> deployment_key.
+   Same mechanism, honest name. It is a customer-held secret, not a
+   tenancy discriminator.
+```
+
+### 2.3 It also strengthens the one claim that survived
 
 `01 §2.3` Claim 1 is *"residency is not blindness."* Single-tenant physical deployment makes that claim stronger, not weaker:
 

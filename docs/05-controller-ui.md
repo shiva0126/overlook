@@ -1050,7 +1050,7 @@ Master-disabled by default is the right posture. A customer can deploy the entir
 
   APPLIANCE
     version 2.1.0 · uptime 41d · [ upgrade ]
-    enrollment: tenant TNT-7742 · cert expires in 62d (auto-renew)
+    enrollment: deployment DPL-acme-bank · cert expires 62d (auto-renew)
     tokenization key: customer KMS ● reachable · [ rotate ]
     backup: nightly to [ configured target ] · [ restore ]
 ```

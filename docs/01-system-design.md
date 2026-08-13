@@ -396,8 +396,12 @@ The Security Fact is the **only** thing that crosses from customer environment t
   "fact_id":      "01JC8Q2K7M4N5P6R7S8T9V0W1X",   // ULID, sortable by time
   "schema":       "overlook.fact.v1",
   "fact_type":    "RELATIONSHIP",                  // ENTITY | RELATIONSHIP | PROPERTY | FINDING | EVENT_SUMMARY
-  "tenant_id":    "TNT-7742",
   "edge_node_id": "EDGE-ap-south-1-a",
+  // NOTE: no tenant_id. One appliance serves one customer (09 §2), and
+  // the mTLS client certificate on the sync channel establishes which
+  // deployment a batch came from. Carrying it on every fact would be
+  // redundant bytes and an invitation to build tenant-aware query paths
+  // we have deliberately designed out.
 
   // --- what is being asserted ---
   "subject":   { "type": "IDENTITY", "token": "IDN-9f3a7c21e845b0d6" },
@@ -491,7 +495,7 @@ Note `record_count_bucket`, not `record_count`. Exact counts can be identifying 
 Facts must be **idempotent on replay**. After a network partition the Edge will resend; after an Edge restart it may rebuild from local state. The rule:
 
 - `fact_id` is a ULID, unique per emission — used for transport-level dedup only.
-- The **semantic identity** of a fact is `hash(tenant_id, fact_type, subject.token, predicate, object.token, canonical(attributes))`.
+- The **semantic identity** of a fact is `hash(fact_type, subject.token, predicate, object.token, canonical(attributes))`. No tenant component: the appliance serves one customer, and on the SaaS side each customer's graph is a separate store, so there is no namespace to disambiguate.
 - SaaS upserts on semantic identity, taking `max(last_seen)`, `min(first_seen)`, `sum(observation_count)` where sensible, and the highest-confidence source.
 
 Getting this wrong produces duplicate edges, which inflate path counts and destroy trust in the numbers. Design it in from the first line of code.
@@ -619,10 +623,10 @@ A random token satisfies (1) and fails (2) and (3). A reversible encryption with
 ### 7.2 The design: deterministic, tenant-keyed HMAC
 
 ```
-token = TYPE_PREFIX + "-" + truncate( HMAC-SHA256( tenant_key, canonical_key ), 16 bytes )
+token = TYPE_PREFIX + "-" + truncate( HMAC-SHA256( deployment_key, canonical_key ), 16 bytes )
 
 e.g.  canonical_key = "email:priya.s@corp.com"
-      tenant_key    = <256-bit key, generated at tenant creation,
+      deployment_key    = <256-bit key, generated at deployment enrollment,
                        held by customer, escrowed in customer KMS/HSM,
                        NEVER transmitted to Overlook SaaS>
 
@@ -642,7 +646,7 @@ Properties this gives us:
   Tenant creation (in customer environment, during Edge enrollment)
         |
         v
-  Edge generates 256-bit tenant_key using OS CSPRNG
+  Edge generates 256-bit deployment_key using OS CSPRNG
         |
         +--> Wrapped with customer KMS/HSM key (envelope encryption)
         |         |
@@ -655,7 +659,7 @@ Properties this gives us:
         |
         v
   Overlook SaaS receives:  nothing.
-                           It sees only the tenant_id and the tokens.
+                           It sees only the deployment_id and the tokens.
 ```
 
 The customer can, at any time, verify this claim by inspecting the Edge Node's outbound queue through the local UI. **Build that inspection UI early** — it converts the privacy claim from a promise into a demonstrable fact, which is worth more in a procurement review than any whitepaper.
@@ -817,7 +821,7 @@ T4   Overlook Agent on LT-4471 reports a process tree
 T5   Fact Builder emits:
 
      ENTITY fact:
-       token: IDN-9f3a7c21e845b0d6      (= HMAC(tenant_key,"email:priya.s@corp.com"))
+       token: IDN-9f3a7c21e845b0d6      (= HMAC(deployment_key,"email:priya.s@corp.com"))
        type: IDENTITY / human_user
        attributes: {department:"ENGINEERING", mfa:true, privileged:false,
                     source_count:5, resolution_confidence:1.0}
@@ -854,7 +858,6 @@ NODE
   token           IDN-9f3a7c21e845b0d6
   type            IDENTITY
   subtype         human_user
-  tenant_id       TNT-7742
   properties      { department, privileged, mfa_enabled, ... }
   criticality     0..100          (crown-jewel weighting)
   first_seen      2026-06-02T09:14:22Z
@@ -1520,7 +1523,7 @@ The bootstrap problem: how does a fresh Edge Node prove it belongs to a tenant, 
  4. Edge Node presents the enrollment token + a CSR to SaaS over TLS.
 
  5. SaaS validates the token, issues a client certificate bound to
-    (tenant_id, edge_node_id), 90-day lifetime.
+    (deployment_id, edge_node_id), 90-day lifetime.
 
  6. Edge Node derives or receives the tenant tokenization key:
       - FIRST node in a tenant: generates it locally, wraps with customer KMS.
@@ -1542,7 +1545,7 @@ Step 6 is the one to get right. It is the only step where a shortcut would let O
                           Edge always initiates
 
    Batch format:
-     header:  tenant_id, edge_node_id, batch_id, schema_version,
+     header:  deployment_id, edge_node_id, batch_id, schema_version,
               fact_count, compression=zstd, sig_alg=ed25519
      body:    zstd(newline-delimited signed facts)
      footer:  batch signature, sha384 of body

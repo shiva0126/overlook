@@ -758,7 +758,7 @@ The identity of a fact is **not** its `fact_id` (a per-emission ULID used only f
 
 ```
    merge_key = hash(
-        tenant_id,
+        // no tenant_id — one appliance, one customer (09 §2)
         fact_type,
         subject.canonical_key,
         predicate,
@@ -1204,7 +1204,7 @@ Testable, not aspirational:
 
                  The SYNTHESIZED escalation edge is NEW ->
                  emitted immediately.
- T13 PRIVACY     canonical keys -> tokens via HMAC(tenant_key, key)
+ T13 PRIVACY     canonical keys -> tokens via HMAC(deployment_key, key)
                  ARN, account name, role name stripped
                  conditions retained as satisfiability classes
                  allow-list validated -> pass
