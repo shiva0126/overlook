@@ -2,7 +2,7 @@
 
 **Version:** 0.1
 **Date:** 2026-08-13
-**Depth:** Quick survey, not deep research. Public documentation and vendor material only.
+**Depth:** Survey of public documentation and vendor material. Chronicle covered in depth; Stellar Cyber at survey level.
 **Purpose:** Validate or refute Overlook's architectural assumptions against two products that have shipped something structurally similar.
 
 ---
@@ -57,14 +57,87 @@ Neither builds an exposure graph. Both have shipped infrastructure we are propos
 
 **Entity aliasing is a real, solved problem.** Chronicle maintains entity records and resolves assets across multiple identifiers. Our three-stage resolver (`01 §8.2`) is not exotic; it is table stakes for anyone building on multi-source telemetry.
 
-### 2.3 Where they are structurally opposite to us
+### 2.3 The Entity Context Graph — closer than expected, but a different object
+
+The first pass assumed Chronicle had no graph. That was wrong, and the correction matters.
+
+Chronicle ships an **Entity Context Graph (ECG)**. It stores assets, users, resources, groups and IOCs. It merges context from identity providers, CMDB systems (ServiceNow, Duo), vulnerability management, Windows AD, Entra ID, Okta and cloud IAM into a single consolidated entity profile. It maintains an **Aliasing Service** that tracks users and assets over time and merges identifiers — which is, functionally, entity resolution. It forms relationships between entities and derives computed attributes such as prevalence and first/last seen.
+
+That is a substantial overlap with `01 §6` (entity model) and `01 §8` (entity resolution). Our resolver is not novel; it is parity.
+
+**But the ECG is a different kind of object, and two details give it away:**
+
+```
+  1. THE RELATIONSHIP SEMANTICS ARE ASSOCIATIVE, NOT PERMISSIVE.
+     ECG relations express "this user is associated with this group",
+     "this asset is associated with this IP".
+     They do NOT express CAN_ASSUME, CAN_READ, or effective permission.
+     There is no policy evaluation, no permission closure, no
+     escalation primitive synthesis.
+
+  2. RELATIONSHIPS ARE FORMED FOR A ONE-DAY INTERVAL.
+     The ECG is rebuilt around event time to enrich detection.
+     It is not a persistent structural graph with edge lifecycle.
+
+     You cannot compute "this path has existed for 41 days" from a
+     graph whose relations are scoped to a day. Our bitemporal model
+     (01 §9.2) is answering a question the ECG is not built to ask.
+```
+
+So: **Chronicle's graph enriches detections. Ours computes exposure.** Same word, different object. The ECG makes an alert more informative; the TrustGraph tells you what to fix before there is an alert.
+
+### 2.4 Data residency — they have it
+
+Google SecOps enforces data residency controls, with regional endpoints, applied to data at rest by default, and to data in use and in transit on request.
+
+This directly undercuts any Overlook positioning built on residency. Chronicle customers in regulated jurisdictions already have a residency answer. Residency is not our wedge and must not be sold as one.
+
+### 2.5 Risk Analytics
+
+Chronicle has entity-centric risk scoring: a Risk Analytics dashboard with behavioural analytics ranking entities by risk score, plus watchlists driven by internal enterprise risk calculations.
+
+This is **behavioural** risk — an entity is risky because it behaved unusually. Ours is **structural** risk — an entity is risky because of what it can reach. Complementary rather than competing, but it means "we score entity risk" is not a differentiating sentence either.
+
+### 2.6 The finding that changes the competitive picture
+
+Google already ships attack path analysis. Not in SecOps — in **Security Command Center**.
+
+```
+   SCC RISK ENGINE
+     attack path simulation
+     attack exposure scores (difficulty for a hypothetical attacker
+        to traverse from a public-internet entry point to a
+        high-value resource)
+     toxic combinations
+     CHOKEPOINTS
+     coverage: Google Cloud AND AWS
+     requires organization-level activation
+```
+
+Attack paths, toxic combinations and chokepoints are the exact vocabulary of `01 §20`, `01 §19.2` and `01 §31`. A hyperscaler is shipping them, across two clouds, potentially bundled into a platform the customer already owns.
+
+**Constraints that leave us room:**
+
+```
+   ✕ Cloud only. SCC cannot reach on-prem Active Directory ACLs,
+     Kerberos delegation, Entra application privilege, or network
+     device configuration.
+   ✕ Org-level activation required — not available to project-level
+     customers.
+   ✕ No AI agent, MCP or RAG entities.
+   ✕ Google reads everything. No privacy boundary of any kind.
+   ✕ Strongest inside Google Cloud; a GCP-centric answer for a
+     multi-cloud, hybrid problem.
+```
+
+### 2.7 Where they are structurally opposite to us
 
 ```
    Chronicle  = camera.  Unit of work: the EVENT. Cost scales with volume.
    Overlook   = map.     Unit of work: the RELATIONSHIP. Cost scales with entities.
 ```
 
-More importantly: **Chronicle has no privacy boundary.** Everything goes to Google. That is a deliberate trade — it buys them scale, search, and a year of retention — but it structurally excludes them from every deal where data cannot leave the customer's jurisdiction or premises. That exclusion is the space Overlook is aiming at, and Chronicle's architecture cannot be retrofitted to occupy it.
+And the boundary difference remains absolute: **everything goes to Google.** Residency controls place data in a chosen region; they do not make Google unable to read it. That distinction — residency versus blindness — is the one claim that survives this entire survey.
 
 ---
 
@@ -165,11 +238,11 @@ Also worth noting: their Data Processor is typically deployed **by the MSSP or t
 ## 5. What we should change
 
 ```
-  C1  REWRITE 01 §2.3 (the wedges)
-      "Privacy-preserving architecture" is not defensible as stated.
-      Replace with the four specific claims in §3.3 above.
-      Edge processing is table stakes; tokenized graph centralisation
-      is the differentiator.
+  C1  REWRITE 01 §2.3 (the wedges)                          ✓ DONE
+      Replaced with three specific claims: residency-is-not-blindness,
+      hybrid depth, and AI agents inside the permission closure.
+      Also added 01 §2.5, a competitive landscape section stating
+      plainly what we are NOT differentiated on.
 
   C2  ADOPT 1:1 PARSER-TO-SOURCE as an explicit manifest rule
       Chronicle enforces it. It makes parser health measurable and
@@ -218,19 +291,68 @@ Reassuring, and worth recording so we stop re-litigating it:
 Stated so the gaps are visible rather than assumed:
 
 ```
-  - Chronicle's entity graph depth — do they model relationships,
-    or only entity records with aliases? Matters for how close they
-    could get to exposure analysis if they chose to.
+  ✓ RESOLVED — Chronicle's entity graph depth. It exists (ECG), does
+    entity resolution and aliasing, but its relationships are
+    associative and scoped to a one-day interval. No permission
+    semantics, no closure. See §2.3.
+  ✓ RESOLVED — Chronicle data residency. It exists. See §2.4.
+  ✓ RESOLVED — Google does ship attack paths and chokepoints, in
+    Security Command Center, not SecOps. See §2.6.
+
+  STILL OPEN
   - Stellar Cyber's actual sensor-side processing depth — "filters"
     could mean anything from a drop rule to real analytics.
-  - Neither vendor's IAM/permission modelling, because neither
-    appears to do it. Worth confirming.
-  - Pricing specifics for either.
-  - The actual exposure-graph competitors (Wiz, XM Cyber, Tenable One),
-    which are a separate and more direct comparison.
+  - Whether SCC's Risk Engine does any real IAM permission closure,
+    or only reachability plus finding severity.
+  - Pricing specifics for any of them.
+  - The direct exposure-graph competitors: Wiz, XM Cyber, Tenable One.
+  - BloodHound Enterprise — the closest thing to our AD/Entra depth.
 ```
 
-That last line is the important omission. These two validate our *plumbing*. The products that threaten our *thesis* are the exposure-graph vendors, and they deserve their own survey.
+The remaining line is the important one. These two validate our *plumbing*. The products that threaten our *thesis* are the exposure-graph vendors — Wiz, XM Cyber, Tenable One, and BloodHound Enterprise — and they deserve their own survey.
+
+---
+
+## 9. The decision taken
+
+After the deeper Chronicle pass, the positioning has been rewritten in `01 §2.3`. Recorded here so the reasoning is not lost:
+
+```
+  DROPPED — no longer claimed as differentiation
+    edge-local processing        Stellar Cyber ships it
+    data residency               Google SecOps and Stellar Cyber ship it
+    entity graph + resolution    Chronicle ECG ships it
+    attack paths and chokepoints Google SCC Risk Engine ships it,
+                                 across GCP and AWS
+
+  KEPT — three claims, each narrow and testable
+    1. RESIDENCY IS NOT BLINDNESS
+       Everyone offers "your data stays in your region."
+       Nobody offers "we cannot read what you send us."
+       Mechanism: customer-held tokenization key + browser-to-Edge
+       de-tokenization. Plaintext never transits the vendor.
+
+    2. HYBRID DEPTH
+       AD ACLs + Kerberos delegation + Entra app privilege +
+       three cloud IAM models + K8s RBAC + federation trusts,
+       in ONE permission closure.
+       SCC and Wiz stop at the VPN. BloodHound has no cloud IAM.
+
+    3. AI AGENTS INSIDE THAT CLOSURE
+       Not an AI dashboard — AI_AGENT and MCP_SERVER as nodes in the
+       same closure as ROLE and DATASTORE, so AI exposure is
+       expressed in entitlement terms.
+
+  THE ONE-SENTENCE VERSION
+    The only exposure graph spanning on-prem directories, multi-cloud
+    IAM and AI agent identity in a single permission closure — and the
+    only one whose vendor cannot read the graph it stores.
+
+  THE DISCIPLINE THAT FOLLOWS
+    Every capability discussion ends with: what finding does this
+    enable that Google, Wiz or XM Cyber structurally CANNOT produce?
+    "A nicer version of theirs" is not a differentiator.
+```
 
 ---
 

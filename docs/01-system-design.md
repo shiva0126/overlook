@@ -112,21 +112,83 @@ They cannot answer the simple question: **which of these findings can actually g
 - **Attack path tools** exist but require shipping everything to the vendor's cloud.
 - **AI security tools** are standalone dashboards. They can tell you a prompt contained a secret. They cannot tell you that the agent which received it can assume a role that reaches production.
 
-### 2.3 The two wedges
+### 2.3 What is actually defensible
 
-Overlook has exactly two defensible positions. Everything else is table stakes.
+An earlier draft of this document claimed two wedges: "privacy-preserving architecture" and "AI as a first-class citizen." A survey of shipped products (`06-prior-art-secops-stellarcyber.md`) showed the first claim was too broad and the second too narrow. This section is the corrected version.
 
-**Wedge 1 — Privacy-preserving architecture.**
-The analysis happens inside the customer's environment. Only derived, tokenized facts leave. This wins deals that are structurally unwinnable for SaaS-only competitors: regulated banking, defence, healthcare, government, and any jurisdiction with data-residency law (EU, India, Gulf states, Indonesia, China).
+#### 2.3.1 What is NOT defensible — stop claiming these
 
-This is not a feature. It is an architecture. It cannot be retrofitted by a competitor without rewriting their platform, which is why it is defensible.
+```
+  ✕ "We process at the customer edge."
+      Stellar Cyber sensors filter and process at the source and
+      market it as a differentiator. This is table stakes.
 
-**Wedge 2 — AI as a first-class citizen of the exposure graph.**
-`AI_AGENT` and `MCP_SERVER` are node types alongside `ROLE` and `DATASTORE`. This lets Overlook answer questions no standalone AI-security tool can:
+  ✕ "Your data stays in your region."
+      Google SecOps enforces data residency at rest by default, with
+      regional endpoints, and in-use/in-transit controls on request.
+      Stellar Cyber keeps data resident per site or region.
+      Residency is a commodity control.
 
-- *This developer has read-only AWS. But the agent they can prompt is admin. That is a privilege escalation path with no CVE and no misconfiguration — it is an architecture problem.*
-- *This MCP server is on a laptop, reads `/finance/`, and the agent using it can send external email.*
+  ✕ "We build an entity graph."
+      Chronicle's Entity Context Graph already merges identity
+      providers, CMDB, and vulnerability data into consolidated entity
+      profiles with relationships and aliasing.
+
+  ✕ "We compute attack paths and find choke points."
+      Google Security Command Center's Risk Engine performs attack
+      path simulation, attack exposure scoring, and toxic combination
+      and chokepoint analysis — across Google Cloud AND AWS.
+```
+
+That last one is the one that should sting. Attack paths and choke points — the vocabulary of `01 §20` and `01 §31` — are already shipping from Google. Any positioning that leads with "we find attack paths" is competing directly with a hyperscaler giving it away inside a platform the customer may already own.
+
+#### 2.3.2 What IS defensible
+
+Three claims. Each is narrow, specific, and testable — and each survives contact with what the incumbents actually ship.
+
+**Claim 1 — Residency is not blindness.**
+
+Every competitor offers *"your data stays in your region."* None offers *"we cannot read what you send us."* Those are different guarantees and only one of them survives a subpoena, a vendor breach, or a rogue vendor employee.
+
+```
+   RESIDENCY (commodity)      the vendor holds your data,
+                              in a location you choose
+
+   BLINDNESS  (ours)          the vendor holds a graph of tokens
+                              it cannot resolve, because the key
+                              never left your environment
+```
+
+The mechanism, not the marketing: deterministic tenant-keyed HMAC tokenization with the key held in customer KMS/HSM (§7.2), and de-tokenization performed browser-to-Edge so plaintext never transits Overlook at all (§7.4). The resulting claim — *"total compromise of Overlook SaaS yields tokenized identifiers, edge types and risk scores, and nothing else"* (§33) — is one no competitor surveyed can make.
+
+**Claim 2 — Hybrid depth, not cloud depth.**
+
+Google SCC's Risk Engine covers Google Cloud and AWS. It cannot reach an on-premises Active Directory ACL, a Kerberos delegation setting, an Entra app registration's Graph permissions, or a FortiGate rulebase. BloodHound reaches AD superbly and has no cloud IAM closure. Cloud-native exposure tools stop at the VPN.
+
+Real attack paths cross those boundaries constantly:
+
+```
+   On-prem AD ─► Entra ─► GitHub OIDC ─► AWS role ─► EC2 ─► VPN ─► on-prem Oracle ─► PII
+   └──── SCC cannot see ────┘         └── SCC sees ──┘  └──── SCC cannot see ────┘
+```
+
+The defensible position is the **permission closure that spans AD ACLs and Kerberos delegation, Entra application privilege, three cloud IAM models, Kubernetes RBAC, and the federation trusts between them** — in one graph, with one set of escalation primitives (`02-iam-deep-dive.md`). That is hard, unglamorous, and nobody has done it end to end.
+
+**Claim 3 — AI agents as privileged identities inside that closure.**
+
+Not "we have an AI dashboard" — every AI-security startup has one. The claim is that `AI_AGENT`, `MCP_SERVER` and `RAG_APPLICATION` are nodes inside the same permission closure as `ROLE` and `DATASTORE`, so an AI exposure is expressed in entitlement terms:
+
+- *This developer has read-only AWS, but the agent they can prompt runs as a service account with Administrator. That is a privilege escalation path with no CVE and no misconfiguration.*
+- *This MCP server on 14 laptops reads a directory containing PII, and the agent using it can send external email.*
 - *An indirect prompt injection in a document indexed by this RAG app reaches an agent whose service account can modify production.*
+
+Standalone AI-security tools cannot say this because they have no identity graph. Exposure vendors cannot say it because they have no AI entities. The combination is currently unoccupied.
+
+#### 2.3.3 The one-sentence version
+
+> Overlook is the only exposure graph that spans on-premises directories, multi-cloud IAM and AI agent identity in a single permission closure — and the only one whose vendor cannot read the graph it stores.
+
+Everything else in this document is in service of making that sentence true and demonstrable.
 
 ### 2.4 The demo that sells the product
 
@@ -155,6 +217,61 @@ Every good security product has one slide. Overlook's is the **AI Privilege Gap*
 ```
 
 Everything in this document exists to make that screen possible, accurate, and trustworthy.
+
+### 2.5 The competitive landscape
+
+No document previously stated who we are unlike and why. This is that statement, including the parts that are uncomfortable.
+
+```
+                    │ Events │ Entity │ Attack │ On-prem │  AI    │ Vendor │
+                    │  /logs │ graph  │ paths  │  depth  │ agents │ blind  │
+  ──────────────────┼────────┼────────┼────────┼─────────┼────────┼────────┤
+  Google SecOps     │  ███   │  ██    │   ─    │    ▪    │   ─    │   ─    │
+  Google SCC        │   ▪    │  ██    │  ███   │    ─    │   ─    │   ─    │
+  Stellar Cyber     │  ███   │   ▪    │   ─    │   ██    │   ─    │   ─    │
+  Wiz / Orca        │   ▪    │  ██    │  ███   │    ─    │   ▪    │   ─    │
+  XM Cyber          │   ─    │  ██    │  ███   │   ██    │   ─    │   ─    │
+  BloodHound        │   ─    │  ██    │  ███   │  ███    │   ─    │  n/a   │
+  AI-sec startups   │   ▪    │   ─    │   ─    │    ─    │  ███   │   ─    │
+  ──────────────────┼────────┼────────┼────────┼─────────┼────────┼────────┤
+  OVERLOOK          │   ▪    │  ███   │  ███   │  ███    │  ███   │  ███   │
+
+  ███ core  ██ partial  ▪ minimal  ─ none
+```
+
+**Read the columns, not the rows.** Every individual capability we have is held by somebody. Nobody holds the combination, and two columns are effectively empty:
+
+- **On-prem depth + cloud paths together.** BloodHound owns AD and has no cloud IAM closure. SCC and Wiz own cloud and stop at the VPN. XM Cyber comes closest and is a heavy, agent-based, vendor-hosted deployment.
+- **Vendor blindness.** Nobody. Residency is universal; unreadability is nobody's.
+
+#### The honest threats
+
+```
+  GOOGLE SCC
+    Risk Engine already does attack paths, exposure scoring, toxic
+    combinations and chokepoints across GCP and AWS. If a customer is
+    a Google Cloud org customer, they may get "good enough" bundled.
+    OUR ANSWER: they cannot see on-prem, Entra app privilege, AD ACLs,
+    or AI agent identity — and Google reads everything.
+
+  WIZ
+    Enormous distribution, agentless, now shipping AI-SPM.
+    OUR ANSWER: cloud-only, SaaS-only, vendor reads everything.
+    We do not win where Wiz wins. We win where Wiz cannot go.
+
+  XM CYBER
+    The closest architectural competitor: hybrid attack paths, on-prem
+    and cloud. OUR ANSWER: agent-heavy, vendor-hosted, no AI agent
+    modelling, no privacy boundary.
+
+  THE REAL RISK
+    Not that a competitor copies the architecture — it is that
+    "good enough, already bundled" beats "better, separately bought."
+    Our answer must be a finding they CANNOT produce, not a
+    better version of one they can.
+```
+
+That last line is the discipline. Every capability discussion should end with: *what finding does this enable that Google, Wiz, or XM Cyber structurally cannot produce?* If the answer is "a nicer one," it is not a differentiator.
 
 ---
 
