@@ -1,24 +1,27 @@
-# Overlook — Ingestion and Sources
+# Overlook — Sources and Their Value
 
-**Version:** 0.1
+**Version:** 0.2
 **Date:** 2026-08-17
-**Companion to:** `04-data-flow-to-security-facts.md` (the ten pipeline stages), `engines/01`–`02` (mechanics), `collectors/00` (collector anatomy)
+**Companion to:** `ingestion/` (how each ingress class works), `04-data-flow-to-security-facts.md` (the ten pipeline stages), `collectors/` (per-collector specs)
 **Status:** Architecture. No implementation.
 
 ---
 
 ## What this document is, and is not
 
-`04` specifies the **pipeline** — ten stages from receive to signed fact. `engines/02` specifies the **mechanics** of receiving. `collectors/00` specifies how a **collector** behaves.
+This document is about **what our sources are worth** — the value-density analysis, what we collect and what we deliberately do not, and how our source strategy differs from an XDR's.
 
-None of them answers the question that comes before all of that: **what are our sources actually worth, and how does data physically get in?**
+**The mechanics of ingestion live in [`ingestion/`](ingestion/00-index.md)** — one document per ingress class, plus the journal, flow control and replay. Parts II and IV below are summaries; the folder is the specification.
 
 ```
-  THIS DOCUMENT       what we ingest · what it is worth · how it
-                      enters · what ingestion guarantees
+  THIS DOCUMENT       what we ingest · what each source is WORTH ·
+                      what we refuse to ingest · how our source
+                      strategy compares
 
-  NOT THIS DOCUMENT   the ten stages (04) · receive internals
-                      (engines/02) · per-collector specs (collectors/)
+  ingestion/          HOW each class physically works
+  04                  the ten pipeline stages
+  collectors/         per-collector specifications
+  connectors/         the source catalog
 ```
 
 ---
@@ -144,6 +147,15 @@ Not everything is judged on density.
 ---
 
 # PART II — HOW DATA PHYSICALLY ENTERS
+
+> **Summary only.** Each class is specified in depth in
+> [`ingestion/01`](ingestion/01-pull.md) (pull),
+> [`02`](ingestion/02-push.md) (push),
+> [`03`](ingestion/03-stream.md) (stream) and
+> [`04`](ingestion/04-agent.md) (agent), with the journal in
+> [`05`](ingestion/05-journal.md), flow control in
+> [`06`](ingestion/06-flow-control.md) and replay in
+> [`07`](ingestion/07-replay.md).
 
 ## 4. The four ingress classes
 
@@ -301,7 +313,9 @@ Backpressure propagates to receive, which sheds **by class, never uniformly**.
 
 ## 10. The journal's second job
 
-The one that matters more than durability.
+The one that matters more than durability. Full specification in
+[`ingestion/05`](ingestion/05-journal.md) and
+[`ingestion/07`](ingestion/07-replay.md).
 
 ```
   Because the privacy architecture forbids asking a customer to
