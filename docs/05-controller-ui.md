@@ -1239,7 +1239,11 @@ The banner states specifically what does and does not work. A generic "connectio
 
 ```
   Q1  Does the Controller ship a local read-only findings/graph view at
-      all, or is degraded mode limited to inventory and health? (04 Q5)
+      all, or is degraded mode limited to inventory and health?
+      PARTIALLY RESOLVED 2026-08-14: the retained dataset is
+      queryable locally via embedded DuckDB (04 §28.1), so degraded
+      mode has real substance. Whether a local PATH view also exists
+      is still open.
 
   Q2  Impact preview requires a collector → edge-type → finding dependency
       graph. Is that derived automatically from manifests plus finding

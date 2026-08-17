@@ -77,7 +77,7 @@ Confirmed 2026-08-13. But the important detail is **what does NOT go in Postgres
 | **Ingest journal** | **Files** | append-only, fsync-critical, TTL'd, sequential read |
 | **Outbound queue** | **Files** | append-only, ordered, segmented |
 | **Evidence store** | **Files** | content-addressed, write-once, TTL'd |
-| **Analytics dataset** | **Files** | columnar, compressed, write-once |
+| **Analytics dataset** | **Parquet + DuckDB** | columnar, compressed, queried in-process (04 §28.1) |
 
 Putting the journal or evidence store in Postgres would be a mistake: they are append-heavy, TTL-driven, and never queried relationally. Files with segment rotation are simpler, faster, and easier to reason about under crash.
 
@@ -129,6 +129,17 @@ Named by role. Versions pinned at build start, not asserted here.
   COMPRESSION
     klauspost/compress   zstd for batches and the analytics dataset
 
+  LOCAL ANALYTICS
+    parquet-go     writes the partitioned analytics dataset
+    duckdb (cgo)   EMBEDDED query engine over that Parquet.
+                   A library, not a daemon — the same test the
+                   message broker failed (§2.5). Zero-copy: the
+                   retained dataset IS the query store.
+                   ⚠ cgo dependency. It is the one place we accept
+                     it, and it must not leak into the agent build,
+                     which stays pure Go for cross-compilation.
+                   See 04 §28.1.
+
   SOURCE SDKs
     aws-sdk-go-v2, azidentity + Azure SDK, google-cloud-go,
     k8s client-go, go-ldap
@@ -176,6 +187,36 @@ Named by role. Versions pinned at build start, not asserted here.
   ✗ A message broker (Kafka, NATS, RabbitMQ)
       Another daemon to operate in a customer environment for
       in-process queueing we can do with channels and files.
+
+      THE FULL REASONING, since "so many collectors" makes this
+      look necessary and it is not:
+        · the ingest journal is ALREADY the durable buffer, and it
+          is better fitted — scoped replay with a diff against
+          original output is a debugging feature a broker lacks
+        · 89% of arriving volume is aggregated in memory at receive
+          and never journaled. A broker would move data we have
+          already decided to discard. ~187 MB/day is durably written.
+        · pipeline stages are goroutine pools in ONE binary.
+          Bounded channels give backpressure with no network hop
+          and no serialization.
+        · the many-collectors problem is a FRAMEWORK problem, not a
+          transport one. It is solved by the manifest, the SDK, the
+          River job queue, fair-queued worker pools and fixture
+          recording. A broker solves none of those.
+
+      WHERE A BROKER WOULD BE RIGHT, and is not yet:
+        · the customer already runs one → we CONSUME from it
+          (connectors/09 §3). Different from operating our own.
+        · the XL profile, when R1/R2 span machines
+        · MSSP console fact ingest at N customers (Mode 2)
+
+      IF ONE IS EVER NEEDED: NATS JetStream — single Go binary,
+      embeddable in-process first and split out later without
+      changing client code. Not Kafka.
+
+      DISCIPLINE THAT KEEPS THIS CHEAP: pipeline stages communicate
+      through an INTERFACE, not raw channels — the same treatment
+      the graph store gets, so a broker is a swap and not a rewrite.
   ✗ An ORM
       Our queries are recursive CTEs and bulk upserts. An ORM
       fights both.
@@ -187,9 +228,9 @@ Named by role. Versions pinned at build start, not asserted here.
   ✗ An SPA framework
       See 2.4.
   ✗ A separate search engine (Elastic/OpenSearch)
-      The analytics dataset is columnar files. Full-text search over
-      retained data is an open product question (04 §28), not a
-      launch requirement.
+      The analytics dataset is Parquet, queried by an EMBEDDED
+      DuckDB — a library, not a daemon (04 §28.1). Elasticsearch
+      would add a JVM, a cluster and a second full copy of the data.
 ```
 
 ---
@@ -600,7 +641,9 @@ Path finding is a recursive CTE over `edges` seeded from crown jewels, reverse-B
       connector count justifies it? Recommend the latter, behind
       the same interface.
   D6  Does Mode 1 need the local path engine, or only findings and
-      the entity browser? (relates to 04 Q5, 05 Q1)
+      the entity browser? (04 Q5 is now resolved — the retained
+      dataset IS queryable via DuckDB, which strengthens the case
+      for a usable degraded mode)
   D7  Agent language — Go for consistency, or Rust for footprint?
       Recommend Go; the agent is thin and read-mostly (01 §12.1).
 ```

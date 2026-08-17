@@ -968,7 +968,7 @@ The most dangerous operation in the pipeline: asserting that something **no long
 | 15 | Evidence store | 3 | Build | Medium |
 | 16 | Normalizer runtime + mappings | 4 | Build + content | Medium |
 | 17 | Enrichment lookups | 5 | Build | Medium |
-| 18 | Local analytics dataset writer | 5 | Build | Medium |
+| 18 | Analytics dataset writer (Parquet) + DuckDB query surface | 5 | Build + borrow | Medium |
 | 19 | Canonical key derivation | 6 | Build | Medium |
 | 20 | Entity resolver (3-stage) | 6 | Build | **High — hardest** |
 | 21 | Resolution Review queue + UI | 6 | Build | Medium |
@@ -1037,7 +1037,7 @@ Four processes, not one and not thirty. This is a decision worth locking before 
   token map             Postgres, separately encrypted   <- crown jewel
   cursor/coverage store Postgres
   outbound queue        durable segments on disk
-  local analytics set   compressed columnar files, encrypted, TTL'd
+  local analytics set   PARQUET files + DuckDB, encrypted, TTL'd
   credential vault      separate process, KMS/HSM-wrapped
 ```
 
@@ -1060,7 +1060,120 @@ Worth stating explicitly, because it is a product surface, not a byproduct:
    fact store           current + retracted tombstones
 ```
 
-The customer paid for an appliance that saw everything. What they can *do* with the retained data — query it, investigate in it, or only resolve evidence hashes against it — is an open product decision, not settled by this document.
+The customer paid for an appliance that saw everything. What they can *do* with the retained data is the subject of §28.1.
+
+### 28.1 The local analytics dataset — Parquet plus DuckDB
+
+**Decided 2026-08-14.** This resolves the open question that was Q5 in this document and Q1 in `05-controller-ui.md`: *is the retained dataset queryable by the customer, or is it an evidence-lookup archive only?*
+
+**It is queryable. Parquet files, read by an embedded DuckDB.**
+
+```
+  WRITE PATH
+    stage 5 (ENRICH) forks normalized, enriched records into
+    partitioned Parquet:
+
+      analytics/
+        source=aws.iam.roles/date=2026-08-14/part-0001.parquet
+        source=fortigate.traffic/date=2026-08-14/part-0001.parquet
+        ...
+
+    zstd-compressed · encrypted at rest with the customer KMS-wrapped
+    key · partition-pruned by source and date · TTL'd by partition
+    directory, so expiry is a directory delete rather than a scan
+
+  READ PATH
+    DuckDB embedded IN-PROCESS — a library, not a daemon.
+    Reads the Parquet directly. No load step, no separate store,
+    no second copy of the data.
+```
+
+**Why this and not the alternatives:**
+
+```
+  ✓ EMBEDDED — a Go library, no extra process, nothing for the
+    customer's operations team to run, patch or be paged for.
+    This is the same test the message-broker question failed
+    (10 §2.5): if it is a daemon in a customer data centre, it
+    needs to earn that.
+
+  ✓ ZERO-COPY — DuckDB queries the Parquet in place. The retained
+    dataset IS the query store; there is no ingest-into-a-second-
+    system step and no duplication of 30 days of data.
+
+  ✓ PARTITION PRUNING — "show me FortiGate traffic to 10.4.2.0/24
+    last Tuesday" reads one day's partition for one source, not
+    the estate.
+
+  ✓ PARQUET IS PORTABLE — the customer can point their own tools at
+    it, export it, or hand it to an auditor. A proprietary format
+    would make the retained data hostage to us, which sits badly
+    beside the rest of the privacy posture.
+
+  ✕ NOT Elasticsearch / OpenSearch — a daemon, a JVM, a cluster to
+    operate, and a full second copy of the data.
+  ✕ NOT SQLite — row-oriented; analytical scans over 30 days of
+    columnar telemetry are the wrong shape for it.
+  ✕ NOT Postgres — this data is append-only, TTL-driven and
+    never joined transactionally. It would bloat the store that
+    holds the graph.
+  ✕ NOT ClickHouse — excellent at this, and a daemon. Same failure
+    on the operations test.
+```
+
+**What it makes possible, that was previously listed as an open question:**
+
+```
+  DEGRADED MODE becomes genuinely useful (05 §29)
+    when the console is unreachable, an analyst can still query
+    30 days of local telemetry — not just view inventory
+
+  JOURNAL REPLAY GAINS A DIFF TARGET (engines/02 §8.1)
+    "what would this parser fix change?" compares new output
+    against the retained dataset rather than against nothing
+
+  THE OPERATOR CAN ANSWER THEIR OWN QUESTIONS
+    "which sources contributed to this finding", "what did this
+    connector actually return last week", "how much did that
+    collector cost us in API calls" — all local, all without a
+    support ticket, which the privacy architecture requires
+    (03 §11.5)
+
+  COST AND COVERAGE REPORTING gets a real backing store
+    per-collector metrics as time series rather than a
+    current-state badge (05 Appendix B.5)
+```
+
+**What it deliberately does not become:**
+
+```
+  ✕ NOT a SIEM. There is no alerting, no correlation search, no
+    long retention tier. 30 days, local, for investigation and
+    diagnostics.
+  ✕ NOT a second product surface. It answers questions about the
+    appliance and its sources. Cross-domain investigation stays
+    in the graph.
+  ✕ NOT shipped upward. Nothing in the analytics dataset ever
+    crosses the Privacy Gate. It is retained precisely because
+    it does not leave.
+```
+
+**Constraints to respect:**
+
+```
+  · encryption at rest is per-file with the customer-held key;
+    DuckDB reads decrypted content in-process and never writes
+    an unencrypted spill file — set temp_directory to an
+    encrypted volume explicitly
+  · query concurrency is capped and runs in the SCANNER pool
+    (04 §26), never the realtime pool. An analyst's ad-hoc query
+    must not contend with the resolve API's latency budget.
+  · a query is bounded by row limit and wall-clock timeout,
+    surfaced as such rather than silently truncated
+  · Parquet writing is batched — one file per source per hour,
+    compacted daily into per-day files. Small-file proliferation
+    is the standard way this design degrades.
+```
 
 ---
 
@@ -1281,7 +1394,9 @@ Testable, not aspirational:
   Q2  Significant-attribute table: who owns it, where does it live? (§20.1)
   Q3  One graph implementation across appliance and SaaS? (§15.1)
   Q4  Four-process boundary confirmed? (§26)
-  Q5  Is the local analytics dataset queryable by the customer,
+  Q5  RESOLVED 2026-08-14 — yes, queryable. Parquet + embedded
+      DuckDB. See §28.1.
+      (was: Is the local analytics dataset queryable by the customer,
       or evidence-lookup only? (§28)
   Q6  Emission heartbeat: 24h, or tied to the staleness horizon? (§23)
   Q7  Appliance packaging: OVA, AMI, container, installer — which first?
