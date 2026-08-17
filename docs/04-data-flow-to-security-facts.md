@@ -7,9 +7,18 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## Scope of this document
 
-This document covers exactly one span of the system: **from the moment data enters the appliance, to the moment a signed Security Fact is queued for transmission.** Nothing after that boundary — no TrustGraph, no attack paths, no SaaS.
+This document covers exactly one span of the system: **from the moment data enters the collector, to the moment a signed Security Fact is queued for transmission.** Nothing after that boundary — no TrustGraph, no attack paths, no SaaS.
 
 It answers four questions:
 
@@ -39,7 +48,7 @@ It answers four questions:
 ### 1.1 The reduction
 
 ```
-   Raw ingested at the appliance      ~2.4 TB / day
+   Raw ingested at the collector      ~2.4 TB / day
    After parse + normalize            ~600 GB
    After resolution + dedup            ~40 GB
    Security Facts built               ~180 MB
@@ -74,7 +83,7 @@ Everything the pipeline does is in service of producing those five, correctly, w
 Not all input behaves the same. Treating them uniformly is the most common way this kind of pipeline goes wrong, because their **recoverability** differs, and recoverability determines the durability contract.
 
 ```
-  PULL      the appliance calls out and fetches
+  PULL      the collector calls out and fetches
             connector API polling
             complete objects, self-describing, re-fetchable
             volume: LOW    value density: VERY HIGH
@@ -343,9 +352,9 @@ The easiest class, because our own software is on the other end.
 ```
   Transport      agent-initiated mTLS, outbound only, no listening port
   Batching       agent batches locally; buffer bounded at 24h / 200 MB
-  Ack            appliance journals + fsync, then acks; agent prunes
+  Ack            collector journals + fsync, then acks; agent prunes
   Ordering       per-agent sequence numbers; gaps are detectable
-  Backpressure   appliance returns a slow-down hint; agent extends its
+  Backpressure   collector returns a slow-down hint; agent extends its
                  batch interval rather than dropping
 ```
 
@@ -490,7 +499,7 @@ The raw record is hashed, encrypted, and written to the evidence store with a TT
           enum canonicalizer (allow/permit/accept -> ALLOW)
 
   FAILS   ambiguous timezone   -> a real problem; policy per source,
-                                 default to source-declared, else appliance TZ
+                                 default to source-declared, else collector TZ
           unmappable field     -> retained in an `extra` bag, not discarded
           enum not in mapping  -> pass through with a flag; monitored
 ```
@@ -615,10 +624,10 @@ This is the "analytics engine", and it is not one engine. It is five subsystems 
 
 ### 15.1 The local graph — a decision that must be made here
 
-7a cannot compute a permission closure without a store of entities and relationships. **The appliance therefore holds a graph**, distinct from the one in SaaS:
+7a cannot compute a permission closure without a store of entities and relationships. **The collector therefore holds a graph**, distinct from the one in SaaS:
 
 ```
-   APPLIANCE GRAPH                 SaaS GRAPH
+   COLLECTOR GRAPH                 SaaS GRAPH
    plaintext canonical keys        tokens only
    this site's scope               all sites, merged
    full policy/condition detail    resolved edges + condition classes
@@ -732,11 +741,11 @@ The least specified and most consequential component. Everything before it is me
 
 ```
    OBSERVATION   one sighting, from one source, at one moment.
-                 Immutable. Cheap. Numerous. Never leaves the appliance.
+                 Immutable. Cheap. Numerous. Never leaves the collector.
 
    FACT          the accumulated, deduplicated, confidence-arbitrated
                  assertion built from many observations.
-                 Mutable. Expensive. Few. Leaves the appliance.
+                 Mutable. Expensive. Few. Leaves the collector.
 ```
 
 ```
@@ -758,7 +767,7 @@ The identity of a fact is **not** its `fact_id` (a per-emission ULID used only f
 
 ```
    merge_key = hash(
-        // no tenant_id — one appliance, one customer (09 §2)
+        // no tenant_id — one collector, one customer (09 §2)
         fact_type,
         subject.canonical_key,
         predicate,
@@ -827,7 +836,7 @@ Two defensible models:
 }
 ```
 
-This keeps wire volume at Model A levels while preserving what Model B was protecting: the analyst can still see *who* claimed this and whether anyone dissented. Arbitration happens at the appliance, where full plaintext context exists — which is the only place it can be done well.
+This keeps wire volume at Model A levels while preserving what Model B was protecting: the analyst can still see *who* claimed this and whether anyone dissented. Arbitration happens at the collector, where full plaintext context exists — which is the only place it can be done well.
 
 ---
 
@@ -876,7 +885,7 @@ When sources disagree, something must decide.
 
 ## 23. Emission policy
 
-Not every merge needs to be transmitted. Without an emission policy the appliance re-sends the entire graph continuously.
+Not every merge needs to be transmitted. Without an emission policy the collector re-sends the entire graph continuously.
 
 ```
    NEW fact                          -> emit immediately.  High value.
@@ -1045,7 +1054,7 @@ Postgres for the structured state. The journal, queue, evidence, and analytics d
 
 ---
 
-## 28. What the appliance retains locally
+## 28. What the collector retains locally
 
 Worth stating explicitly, because it is a product surface, not a byproduct:
 
@@ -1054,13 +1063,23 @@ Worth stating explicitly, because it is a product surface, not a byproduct:
    Shipped upward      12 MB/day
    Retained locally    everything the customer chose to retain
 
-   evidence store       default 90 days   ~3 TB at profile M
-   local analytics set  default 30 days
-   entity + graph       current + 30 days of history
-   fact store           current + retracted tombstones
+   ⚠ REVISED under the handoff's 1 TB ceiling (01 §10.3).
+     Earlier figures assumed 8 TB at Edge L, which no longer exists.
+
+   encrypted spool      600-700 GB   ← the priority. Outage survival
+                                       is the collector's job.
+   entity cache          50-100 GB   bounded, TTL eviction (handoff §10.1)
+   parsers/connectors        20 GB
+   operational logs       20-30 GB
+   evidence store       default 14 days, hash + bounded excerpt
+                        ← was 90 days / full artifact. ESCALATION E7.
+   local analytics set  DOES NOT FIT. ESCALATION E6 — drop, shrink to
+                        7 days, or add-on volume outside the ceiling.
+   entity + graph       the collector holds a bounded CACHE, not a
+                        graph. The graph is SaaS (handoff §3.2).
 ```
 
-The customer paid for an appliance that saw everything. What they can *do* with the retained data is the subject of §28.1.
+The customer paid for a collector that saw everything. What they can *do* with the retained data is the subject of §28.1.
 
 ### 28.1 The local analytics dataset — Parquet plus DuckDB
 
@@ -1151,7 +1170,7 @@ The customer paid for an appliance that saw everything. What they can *do* with 
     long retention tier. 30 days, local, for investigation and
     diagnostics.
   ✕ NOT a second product surface. It answers questions about the
-    appliance and its sources. Cross-domain investigation stays
+    collector and its sources. Cross-domain investigation stays
     in the graph.
   ✕ NOT shipped upward. Nothing in the analytics dataset ever
     crosses the Privacy Gate. It is retained precisely because
@@ -1197,7 +1216,7 @@ Nothing in Part V can be built correctly until these are fixed. They are the gen
 
   3. CANONICAL KEY PRIORITY RULES
      per entity type, ordered, with normalization rules.
-     WHY FIRST: get this wrong and every Edge Node produces different
+     WHY FIRST: get this wrong and every Edge Collector produces different
      tokens for the same entity, fragmenting the graph invisibly.
 
   4. SIGNIFICANT-ATTRIBUTE TABLE (per predicate)
@@ -1234,7 +1253,7 @@ Nothing in Part V can be built correctly until these are fixed. They are the gen
   D6  Evidence retention default       -> recommended: 90 days (§28)
   D7  Journal durability per class     -> fsync PUSH/AGENT, batch STREAM,
                                           cursor-only PULL (§8)
-  D8  Appliance packaging              -> OVA / AMI / container / installer
+  D8  Collector packaging              -> OVA / AMI / container / installer
   D9  Local retention query surface    -> searchable, or evidence-lookup only
   D10 Quarantine retention + sampling rate
 ```
@@ -1250,7 +1269,7 @@ Worth stating, to avoid inventing blockers:
   - the SaaS console              (independent)
   - the Overlook Agent            (an ingress class; pipeline works without it)
   - the AI Gateway                (same)
-  - multi-tenancy                 (single tenant per appliance by definition)
+  - multi-tenancy                 (single tenant per collector by definition)
   - HA / clustering               (single node is a valid deployment)
   - the escalation primitive catalog  (content; the ENGINE is the prerequisite,
                                        the catalog grows forever)
@@ -1271,10 +1290,10 @@ Testable, not aspirational:
   [ ] A complete run correctly retracts a deleted object.
   [ ] The Privacy Gate rejects a fact containing a plaintext email,
       and quarantines rather than transmits.
-  [ ] The same entity observed by two appliances with the same tenant
+  [ ] The same entity observed by two collectors with the same tenant
       key produces the SAME token.
   [ ] Parse failures are quarantined and counted; parse rate is visible.
-  [ ] Killing the appliance mid-batch loses no PUSH or AGENT data.
+  [ ] Killing the collector mid-batch loses no PUSH or AGENT data.
   [ ] Steady-state emission for a stable environment is near zero.
   [ ] The outbound inspector shows a customer exactly what left,
       in final form, for the last 24 hours.
@@ -1392,14 +1411,14 @@ Testable, not aspirational:
 ```
   Q1  Fact granularity: Model A + provenance confirmed? (§21)
   Q2  Significant-attribute table: who owns it, where does it live? (§20.1)
-  Q3  One graph implementation across appliance and SaaS? (§15.1)
+  Q3  One graph implementation across collector and SaaS? (§15.1)
   Q4  Four-process boundary confirmed? (§26)
   Q5  RESOLVED 2026-08-14 — yes, queryable. Parquet + embedded
       DuckDB. See §28.1.
       (was: Is the local analytics dataset queryable by the customer,
       or evidence-lookup only? (§28)
   Q6  Emission heartbeat: 24h, or tied to the staleness horizon? (§23)
-  Q7  Appliance packaging: OVA, AMI, container, installer — which first?
+  Q7  Collector packaging: OVA, AMI, container, installer — which first?
   Q8  Correlation engine (7d): does it exist at all before the
       attack path engine, or is early correlation purely posture rules?
 ```

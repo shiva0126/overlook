@@ -4,9 +4,18 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
-Everything else in this series is **exposure intelligence** — the graph, paths, scores. This is a different kind of analytics: **operational and diagnostic**, over the 30 days of enriched telemetry the appliance retains locally (`../04-data-flow-to-security-facts.md §28.1`).
+Everything else in this series is **exposure intelligence** — the graph, paths, scores. This is a different kind of analytics: **operational and diagnostic**, over the 30 days of enriched telemetry the collector retains locally (`../04-data-flow-to-security-facts.md §28.1`).
 
 They answer different questions:
 
@@ -15,7 +24,7 @@ They answer different questions:
                             structural · the graph · leaves as facts
 
   LOCAL ANALYTICS           "what actually happened, and is this
-                            appliance working?"
+                            collector working?"
                             temporal · Parquet + DuckDB · NEVER leaves
 ```
 
@@ -150,9 +159,9 @@ Carried from `../04 §28.1`, restated because violating any of them is a real fa
 
 **This is not a SIEM and must not become one.** No alerting, no correlation search, no long retention tier. Thirty days, local, for diagnostics and investigation support. The moment someone asks for a saved search that emails on match, that is the boundary.
 
-**It is not a second product surface.** It answers questions about the appliance and its sources. Cross-domain investigation stays in the graph, in the console. The Controller's line (`../05 §2.1`) holds.
+**It is not a second product surface.** It answers questions about the collector and its sources. Cross-domain investigation stays in the graph, in the console. The Controller's line (`../05 §2.1`) holds.
 
-**Retention is a cost slider with visible consequences.** 30 days at profile M is roughly 400 GB of Parquet after compression. The Controller should show the disk cost as the operator moves it, the same way evidence retention does.
+**Retention is a cost slider with visible consequences.** 30 days at Edge M is roughly 400 GB of Parquet after compression. The Controller should show the disk cost as the operator moves it, the same way evidence retention does.
 
 **Schema evolution is real.** Enriched records change shape as normalizers are updated. Parquet handles added columns; removed or retyped columns break older partitions. Version the schema per partition and let DuckDB union across versions.
 
@@ -231,7 +240,7 @@ Carried from `../04 §28.1`, restated because violating any of them is a real fa
     [ show the 3 most recent raw records ]
 
   The raw records are enriched, plaintext, local, and never left
-  the appliance.
+  the collector.
 ```
 
 ### 8.3 Cost, answered without guessing

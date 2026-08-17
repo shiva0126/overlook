@@ -9,6 +9,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. The headline
 
 ```
@@ -76,7 +85,7 @@ Every connector takes roughly the same shape:
 Two things to note:
 
 - **Tenant is a first-class field on every connector.** Multi-tenancy is not bolted on; it is in the connector's primary configuration. This is what "built in from inception" actually looks like — and it shows the cost we avoid entirely by going multi-instance instead (`09 §2`).
-- **"Device/DP selection"** — the operator chooses *which processor* runs the connector. Their distributed model exposes execution placement in the connector config. Overlook needs the same field: the hybrid archetype (`09 §4`) deploys two Edge Nodes per customer.
+- **"Device/DP selection"** — the operator chooses *which processor* runs the connector. Their distributed model exposes execution placement in the connector config. Overlook needs the same field: the hybrid archetype (`09 §4`) deploys two Edge Collectors per customer.
 
 ### 2.3 How they build connectors ✔
 
@@ -203,7 +212,7 @@ Doc 03 proposed 118 connectors and 695 collectors. Against a depth strategy, tha
 
   T5  MULTI-TENANCY LIVES IN THE CONNECTOR CONFIG — BUT NOT FOR US.
       Tenant is a primary field on every Stellar Cyber connector.
-      RESOLVED 2026-08-13: Overlook is multi-INSTANCE (one appliance
+      RESOLVED 2026-08-13: Overlook is multi-INSTANCE (one collector
       per customer), so no tenant field is required. See doc 09.
 
   T6  EXECUTION PLACEMENT IS A CONNECTOR-LEVEL FIELD.
@@ -285,14 +294,14 @@ connector:
                                     # manifest with separate credentials
 
   # RETRACTED 2026-08-13 — tenant_scoped is NOT needed.
-  # Overlook is multi-INSTANCE, not multi-tenant: one appliance per
+  # Overlook is multi-INSTANCE, not multi-tenant: one collector per
   # customer, physical isolation. There is no tenant concept inside
   # the pipeline. See 09-deployment-and-tenancy-model.md §2.
 
   # NEW — execution placement for multi-Edge deployments (T6)
   # MORE relevant under the MSSP model: Archetype 3 (hybrid) deploys
-  # two Edge Nodes per customer, on-prem and cloud.
-  execution: { placement: any }     # any | pinned:<edge_node_id>
+  # two Edge Collectors per customer, on-prem and cloud.
+  execution: { placement: any }     # any | pinned:<collector_id>
 
   collectors:
     - id: iam.roles

@@ -4,11 +4,20 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 **E2, Fingerprint**, answers *what is this?* For a connector the answer is declared. For a syslog line arriving from an unknown IP, it must be inferred.
 
-**E3, Parser**, turns bytes into a typed record using a grammar selected by E2's answer. It is the most open-ended component in the appliance and carries a permanent content cost.
+**E3, Parser**, turns bytes into a typed record using a grammar selected by E2's answer. It is the most open-ended component in the collector and carries a permanent content cost.
 
 Both exist only for stream and file sources. Neither is needed while every source is an authenticated JSON API — which is why they are the largest single saving in the v1 scope cut (`../10 §4.2`).
 
@@ -194,7 +203,7 @@ Meridian is a future-state deployment for this engine — it has four firewalls,
 ```
   ESTABLISHED STATE
 
-    source registry, EDGE-DC1
+    source registry, COL-DC1
       10.4.0.9:6514   → paloalto / PAN-OS 11.1     parse 99.1%
       10.4.0.11:6514  → paloalto / PAN-OS 11.1     parse 98.7%
       10.4.7.2:6514   → fortinet / FortiOS 7.4     parse 98.4%

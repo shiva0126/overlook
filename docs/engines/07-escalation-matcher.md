@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 The Escalation Matcher **synthesizes edges that exist in no policy document.**
@@ -212,7 +221,7 @@ Non-negotiable, for three reasons: an analyst will not believe an edge they cann
     capability sets from E7 for ~10,500 principals across
     41 AWS accounts, 18 Azure subscriptions and 2 AD forests
 
-  RUN TIME  4 minutes on EDGE-CLD, 90 seconds on EDGE-DC1
+  RUN TIME  4 minutes on COL-CLD, 90 seconds on COL-DC1
 ```
 
 ### 8.1 AWS matches
@@ -257,7 +266,7 @@ Non-negotiable, for three reasons: an analyst will not believe an edge they cann
       own profile
 ```
 
-### 8.3 AD matches — EDGE-DC1
+### 8.3 AD matches — COL-DC1
 
 ```
   WriteDacl on the Domain Admins group, held by a service account

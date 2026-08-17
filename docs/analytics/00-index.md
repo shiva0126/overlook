@@ -7,6 +7,28 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
+## ⚠ This entire series is SAAS-SIDE
+
+Per handoff §3.2, everything in these nine documents — crown jewels,
+start conditions, the path engine, scoring, choke points, exposure
+metrics, blast radius, change intelligence — is **Overlook SaaS**, not
+Edge Collector. It is outside the collector engineer's assignment.
+
+The one exception is `08-local-analytics.md`, which describes
+collector-local diagnostics and is subject to escalation **E6** (the
+1 TB ceiling).
+
+---
+
 ## Why this series exists
 
 The doc set has an asymmetry:

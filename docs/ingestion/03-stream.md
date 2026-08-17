@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. What it is
 
 The source fires continuously and never stops. 95% of arriving bytes and 0.003% of the graph.
@@ -228,7 +237,7 @@ The detail that catches people out.
 ## 10. Example: Meridian, one hour of stream
 
 ```
-  09:00-10:00, EDGE-DC1
+  09:00-10:00, COL-DC1
 
   SYSLOG — 4 firewalls, TCP/TLS:6514
     129 million events ≈ 52 GB
@@ -244,7 +253,7 @@ The detail that catches people out.
     171 million records ≈ 37 GB
     NetFlow v9, templates from 6 exporters
 
-    08:58  appliance restarted for a content update
+    08:58  collector restarted for a content update
     08:58  template cache empty → "awaiting template" state
     09:02  first templates arrive from 5 of 6 exporters
     09:04  sixth exporter's template arrives (5-minute interval)

@@ -2,8 +2,17 @@
 
 **Version:** 0.1
 **Date:** 2026-08-17
-**Scope:** How data physically enters the appliance. Mechanics only.
+**Scope:** How data physically enters the collector. Mechanics only.
 **Status:** Architecture. No implementation.
+
+---
+
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
 
 ---
 
@@ -85,8 +94,8 @@ Meridian Financial, continuing from `../12-end-to-end-deployment-story.md`:
   41 AWS accounts · 2 AD forests · Entra · CrowdStrike · FortiEDR
   Scalefusion · Forcepoint DLP · VMware · Oracle
 
-  EDGE-DC1  on-prem, profile L
-  EDGE-CLD  AWS private subnet, profile M
+  COL-DC1  on-prem, Edge L
+  COL-CLD  AWS private subnet, Edge M
 ```
 
 ---

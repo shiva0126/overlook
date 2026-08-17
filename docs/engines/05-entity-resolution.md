@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 Entity Resolution decides **which thing this record is about.** One person appears in eight systems under eight identifiers. One server appears in six. If E6 collapses them correctly, the graph is a coherent map. If it does not, the graph is a set of disconnected fragments and every cross-domain attack path — the entire product — silently ceases to exist.
@@ -26,7 +35,7 @@ It is also the engine with the most asymmetric failure cost. Under-merging costs
 
   DEPENDS ON
     canonical key priority rules   (shipped config, identical on
-                                    every Edge Node in a deployment)
+                                    every Edge Collector in a deployment)
     the Resolution Directory       (tenant-wide alias → canonical key)
 ```
 
@@ -111,23 +120,23 @@ The 0.65–0.85 band goes to a human. This is **an ongoing operational task, not
 
 ### 3.4 The Resolution Directory
 
-A tenant-wide mapping of `alternate_identifier → canonical_key`, replicated between Edge Nodes.
+A tenant-wide mapping of `alternate_identifier → canonical_key`, replicated between Edge Collectors.
 
 ```
   WHY IT IS MANDATORY, NOT OPTIONAL
 
-  EDGE-CLD sees "CORP\priyas" in a CrowdStrike record. It has no
+  COL-CLD sees "CORP\priyas" in a CrowdStrike record. It has no
   AD connector and no way to know who that is.
 
-  It queries the Resolution Directory, which EDGE-DC1 populated
+  It queries the Resolution Directory, which COL-DC1 populated
   hours earlier when it read AD, and learns the canonical key is
   email:priya.s@meridian.com.
 
-  WITHOUT IT: two Edge Nodes produce different canonical keys for
+  WITHOUT IT: two Edge Collectors produce different canonical keys for
   the same person, therefore different tokens, therefore two
   disconnected subgraphs, therefore no hybrid attack path.
 
-  V1 IMPLEMENTATION: elect one Edge Node as resolution primary;
+  V1 IMPLEMENTATION: elect one Edge Collector as resolution primary;
   others query it with a cached fallback if unreachable.
 ```
 
@@ -147,7 +156,7 @@ A tenant-wide mapping of `alternate_identifier → canonical_key`, replicated be
 
 **Bias toward under-merge, deliberately.** Set thresholds so that ambiguity goes to a human rather than to a guess. A missed finding is invisible and recoverable; a false accusation is visible and destroys credibility.
 
-**Canonical key rules must be identical across Edge Nodes.** They are shipped configuration, versioned, and part of the deployment — not per-node settings. If DC1 prefers email and CLD prefers SAM name, they produce different keys for the same person and the graph fragments invisibly.
+**Canonical key rules must be identical across Edge Collectors.** They are shipped configuration, versioned, and part of the deployment — not per-node settings. If DC1 prefers email and CLD prefers SAM name, they produce different keys for the same person and the graph fragments invisibly.
 
 **Normalization happens before resolution and determines its success.** `Priya.S@Meridian.com` and `priya.s@meridian.com` must already be identical strings by the time E6 sees them (`04-normalizer-and-enrichment.md §8`).
 
@@ -211,7 +220,7 @@ A tenant-wide mapping of `alternate_identifier → canonical_key`, replicated be
 ## 8. Example: Meridian, resolving Priya across eight sources
 
 ```
-  T0   AD (EDGE-DC1, band 1)
+  T0   AD (COL-DC1, band 1)
        mail = priya.s@meridian.com
        → priority 1 key. STAGE 1 deterministic.
        → NEW entity E-00417, canonical email:priya.s@meridian.com
@@ -221,23 +230,23 @@ A tenant-wide mapping of `alternate_identifier → canonical_key`, replicated be
        → all three written to the RESOLUTION DIRECTORY
        confidence 1.0
 
-  T1   Entra ID (EDGE-CLD, band 1)
+  T1   Entra ID (COL-CLD, band 1)
        userPrincipalName / mail = priya.s@meridian.com
        → priority 1 key. Exact match on E-00417. STAGE 1.
        → merged. Aliases added: entra:00u1a2b3c4d5
        confidence 1.0
 
-  T2   AWS IAM (EDGE-CLD, band 2)
+  T2   AWS IAM (COL-CLD, band 2)
        tag.email = priya.s@meridian.com
        → priority 1 key. Match. STAGE 1.
        → merged. Alias: arn:aws:iam::123456789012:user/priya.s
        → new observation: E-00417 CAN_ASSUME role/GHADeployRole
 
-  T3   Azure (EDGE-CLD, band 2)
+  T3   Azure (COL-CLD, band 2)
        priya.s@meridian.com, Contributor on 2 subscriptions
        → STAGE 1. Merged.
 
-  T4   GitHub (EDGE-CLD, band 3)
+  T4   GitHub (COL-CLD, band 3)
        login "psharma-meridian", verified email priya.s@meridian.com
        → the LOGIN is not a canonical key. The VERIFIED EMAIL is.
        → STAGE 1 on the email. Merged.
@@ -245,7 +254,7 @@ A tenant-wide mapping of `alternate_identifier → canonical_key`, replicated be
        ← note: had GitHub not exposed a verified email, this would
          have dropped to stage 2 and probably the review queue.
 
-  T5   CrowdStrike (EDGE-DC1, band 5)
+  T5   CrowdStrike (COL-DC1, band 5)
        user string "CORP\priyas" on host LT-4471
        → NOT a priority-1 key. Priority 5.
        → RESOLUTION DIRECTORY lookup:
@@ -255,13 +264,13 @@ A tenant-wide mapping of `alternate_identifier → canonical_key`, replicated be
          CrowdStrike's view of Priya is a separate node and every
          path through her endpoint breaks.
 
-  T6   The agent on LT-4471 (EDGE-DC1, continuous)
+  T6   The agent on LT-4471 (COL-DC1, continuous)
        local user "priyas", host lt-4471
        → E5 attached "corp\priyas" with confidence 0.9
        → directory lookup → E-00417. Merged, confidence 0.94
          (capped by the enrichment confidence, not raised above it)
 
-  T7   Forcepoint DLP (EDGE-DC1, band 5)
+  T7   Forcepoint DLP (COL-DC1, band 5)
        priya.s@meridian.com, 2 policy events
        → STAGE 1. Merged.
 

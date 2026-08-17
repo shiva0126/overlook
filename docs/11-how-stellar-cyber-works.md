@@ -2,10 +2,19 @@
 
 **Version:** 0.1
 **Date:** 2026-08-13
-**Companion to:** `06-prior-art-secops-stellarcyber.md`, `08-connector-benchmark-and-alignment.md`, `10-appliance-stack-and-engines.md`
+**Companion to:** `06-prior-art-secops-stellarcyber.md`, `08-connector-benchmark-and-alignment.md`, `10-collector-stack-and-engines.md`
 **Purpose:** Explain the mechanics of Stellar Cyber's platform — how the sensors, connectors, parsers, engines and data lake actually fit together — and what that means for Overlook.
 
 **Confidence:** ✔ verified from Stellar Cyber's own documentation in this session.
+
+---
+
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
 
 ---
 
@@ -424,7 +433,7 @@ Adding a GitHub connector to Stellar Cyber gives them GitHub *events*. It does n
 ```
   X1  CONNECTORS RUNNING CENTRALLY
       For them the DP is customer-side, so it is fine. For us,
-      connectors MUST run on the appliance — they read policy
+      connectors MUST run on the collector — they read policy
       documents and credentials, which is precisely the data that
       may not travel.
 
@@ -490,7 +499,7 @@ Where their completeness *should* worry us is operational, not architectural: th
     A1  Name and publish the Security Fact schema as a product asset
         with a field dictionary, the way Interflow is. (M2)
     A2  State explicitly in 10 §2 that connectors run ON the
-        appliance and why — the contrast with Stellar Cyber's
+        collector and why — the contrast with Stellar Cyber's
         DP-resident connectors makes the reasoning clearer than
         asserting it alone. (X1)
 

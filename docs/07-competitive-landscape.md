@@ -9,6 +9,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. The short version
 
 The three claims kept in `01 §2.3` after the Chronicle survey were:
@@ -271,7 +280,7 @@ Four honest options, given: **one person, Go, Postgres, no code yet.**
   UNIQUE    The architecture is. The findings are not — BloodHound and
             XM Cyber produce similar output for buyers who can use them.
 
-  BUILD     Edge Node + Security Fact + tokenization + de-tokenization
+  BUILD     Edge Collector + Security Fact + tokenization + de-tokenization
             + AD/Entra/AWS connectors + permission closure
             + escalation primitives + path engine + minimal UI
 
@@ -299,7 +308,7 @@ Four honest options, given: **one person, Go, Postgres, no code yet.**
             A unified, versioned, multi-cloud, machine-readable catalog
             with a working evaluator does not.
 
-  BUILD     content + a Go evaluator. No appliance, no SaaS, no UI.
+  BUILD     content + a Go evaluator. No collector, no SaaS, no UI.
 
   EFFORT    2-4 months solo for a credible v1
 

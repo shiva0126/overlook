@@ -4,9 +4,18 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
-The Orchestration Engine decides **what collects, when, in what order, at what rate, and with which credential.** Nothing else in the appliance starts work on its own. Every connector run, every scheduled sweep and every credential request passes through it.
+The Orchestration Engine decides **what collects, when, in what order, at what rate, and with which credential.** Nothing else in the collector starts work on its own. Every connector run, every scheduled sweep and every credential request passes through it.
 
 It is the only engine whose failure is silent by default: if orchestration stops scheduling, no error appears anywhere — collection simply stops, freshness decays, and the graph quietly goes stale. That property shapes most of its design.
 
@@ -151,7 +160,7 @@ Jobs live in Postgres, not memory. A crash mid-cycle must not lose the knowledge
 
 **Do not conflate scheduling with retrying.** A collector that fails because of a bad credential must not be rescheduled on its normal cadence; it must be circuit-broken. A collector that fails because of a transient network error should be retried with backoff. Classifying the error correctly is orchestration's job.
 
-**Placement.** With two Edge Nodes, a job must run on the node that can reach the source. Placement comes from the connector instance configuration (`../08 §6.2`), and orchestration must refuse to dispatch a job to a node that cannot reach its target rather than letting it fail.
+**Placement.** With two Edge Collectors, a job must run on the node that can reach the source. Placement comes from the connector instance configuration (`../08 §6.2`), and orchestration must refuse to dispatch a job to a node that cannot reach its target rather than letting it fail.
 
 ---
 
@@ -200,7 +209,7 @@ Jobs live in Postgres, not memory. A crash mid-cycle must not lose the knowledge
   DEFER
     weighted fair queueing (matters at 30+ connectors, v1 has 6)
     cost feedback loop (measure first, adapt later)
-    multi-node placement (v1 may be a single Edge Node)
+    multi-node placement (v1 may be a single Edge Collector)
 ```
 
 ---
@@ -215,11 +224,11 @@ Jobs live in Postgres, not memory. A crash mid-cycle must not lose the knowledge
          → attention item raised with the graph consequence.
 
   00:02  BAND 1 — IDENTITY AUTHORITIES
-         EDGE-DC1: AD full sweep across 2 forests, 3 domains
+         COL-DC1: AD full sweep across 2 forests, 3 domains
                    24,000 objects, 720,000 ACEs, 2.8 GB
                    paged and rate-limited — Meridian's SOC has this
                    collection profile allowlisted
-         EDGE-CLD: Entra delta query, AWS Organizations (42 accounts),
+         COL-CLD: Entra delta query, AWS Organizations (42 accounts),
                    Azure management groups, GCP hierarchy
 
          AD takes 31 minutes. Entra finishes in 90 seconds and waits.

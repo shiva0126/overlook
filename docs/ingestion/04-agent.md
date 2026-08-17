@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. What it is
 
 Our own software reporting in. The easiest ingress class to make correct, because we control both ends — and the one carrying the most differentiated data in the catalog (`../connectors/10`).
@@ -21,26 +30,26 @@ The defining property: **the agent buffers its own output**, so retry lives at t
        24 hours OR 200 MB, whichever comes first.
 
   2  AGENT DIALS OUT
-     mTLS to the appliance's agent gateway, port 8443.
+     mTLS to the collector's agent gateway, port 8443.
      AGENT-INITIATED, ALWAYS. The agent has no listening port,
      which removes an entire vulnerability class.
 
   3  MUTUAL AUTHENTICATION
      Agent presents its client certificate, issued at enrollment.
-     Appliance presents its own. Both verify. Revocation checked.
+     Collector presents its own. Both verify. Revocation checked.
 
   4  BATCH UPLOAD
      Records batched, zstd-compressed, with per-agent sequence
      numbers so gaps are detectable.
 
-  5  APPLIANCE JOURNALS + FSYNC
+  5  COLLECTOR JOURNALS + FSYNC
 
-  6  APPLIANCE ACKS, with the highest sequence number accepted
+  6  COLLECTOR ACKS, with the highest sequence number accepted
 
   7  AGENT PRUNES its local buffer up to that sequence number
      ONLY on ack. Never before.
 
-  8  APPLIANCE RETURNS A PACING HINT (optional)
+  8  COLLECTOR RETURNS A PACING HINT (optional)
      Under load, tells the agent to extend its batch interval.
 
   9  AGENT POLLS FOR COMMANDS on the same connection
@@ -64,7 +73,7 @@ The defining property: **the agent buffers its own output**, so retry lives at t
 
   4  agent presents the token plus a CSR over TLS
 
-  5  appliance validates the token, issues a client certificate
+  5  collector validates the token, issues a client certificate
      bound to (deployment_id, agent_id), 90-day lifetime
 
   6  ongoing: auto-renew at 2/3 lifetime over the established mTLS
@@ -94,7 +103,7 @@ The defining property: **the agent buffers its own output**, so retry lives at t
     scans. A laptop offline for a month delivers the most recent
     24 hours and reports what it dropped.
 
-  This is why the appliance's contract is light: journal, fsync,
+  This is why the collector's contract is light: journal, fsync,
   ack. If the ack is lost, the agent resends. Duplicates are
   absorbed by sequence numbers and downstream idempotency.
 ```
@@ -107,7 +116,7 @@ The defining property: **the agent buffers its own output**, so retry lives at t
   Each agent maintains a monotonic sequence per collector.
   Every batch declares [first_seq, last_seq].
 
-  THE APPLIANCE CAN THEREFORE DETECT
+  THE COLLECTOR CAN THEREFORE DETECT
     duplicate batch   last_seq ≤ highest already accepted
                       → ack immediately, do not journal twice
     gap               first_seq > highest accepted + 1
@@ -129,18 +138,18 @@ The defining property: **the agent buffers its own output**, so retry lives at t
   Other classes push back by refusing (503) or shedding.
   This one negotiates.
 
-  Under load the appliance returns a pacing hint:
+  Under load the collector returns a pacing hint:
     { "extend_interval_to": 900, "reason": "ingest_backlog" }
 
   The agent extends its batch interval rather than dropping data,
   because it has a buffer and can afford to wait.
 
   This is strictly better than refusal: nothing is lost, the
-  appliance recovers, and 8,500 agents naturally de-synchronise
+  collector recovers, and 8,500 agents naturally de-synchronise
   instead of retrying in lockstep.
 ```
 
-**Jitter is applied at the agent, not the appliance.** 8,500 agents on a 4-hour cadence with no jitter is 8,500 connections in the same second, four times a day. Each agent jitters ±25% of its interval, deterministically seeded by its own ID so the spread is stable across restarts.
+**Jitter is applied at the agent, not the collector.** 8,500 agents on a 4-hour cadence with no jitter is 8,500 connections in the same second, four times a day. Each agent jitters ±25% of its interval, deterministically seeded by its own ID so the spread is stable across restarts.
 
 ---
 
@@ -174,10 +183,10 @@ The defining property: **the agent buffers its own output**, so retry lives at t
 | Agent buffer full | Oldest low-priority records dropped | Drop recorded and reported as a coverage gap |
 | Agent offline > 90 days | Certificate cannot renew | Expiry surfaced per agent; self-service re-enrollment |
 | No jitter | 8,500 simultaneous connections | Deterministic per-agent jitter, ±25% |
-| Appliance overloaded | Agents retry in lockstep | Pacing hints, not refusal |
+| Collector overloaded | Agents retry in lockstep | Pacing hints, not refusal |
 | Partial local scan (TCC denied) | Wrongful tombstoning | No coverage window for that host |
 | Agent compromised | Malicious data injected | mTLS identity, per-agent anomaly baselines, and the agent has no privileged capability to abuse |
-| Clock skew on the endpoint | Timestamps wrong | Appliance records receive time alongside agent time |
+| Clock skew on the endpoint | Timestamps wrong | Collector records receive time alongside agent time |
 
 ---
 
@@ -196,7 +205,7 @@ The defining property: **the agent buffers its own output**, so retry lives at t
 ## 10. Example: Meridian, one hour of agents
 
 ```
-  09:00-10:00, EDGE-DC1, 8,500 enrolled agents
+  09:00-10:00, COL-DC1, 8,500 enrolled agents
 
   CONNECTIONS
     ~2,100 agents reported this hour
@@ -209,7 +218,7 @@ The defining property: **the agent buffers its own output**, so retry lives at t
     → each agent pruned its buffer
 
   ONE PACING EVENT
-    09:14  the appliance is briefly loaded — the nightly Parquet
+    09:14  the collector is briefly loaded — the nightly Parquet
            compaction overlapped a large AD delta
     → pacing hint returned: extend to 900s
     → 340 agents in that window extended their interval

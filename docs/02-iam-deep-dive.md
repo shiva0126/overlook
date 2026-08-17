@@ -7,6 +7,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## Why this document exists
 
 The system design document treats IAM as a subproblem of the attack path engine — about one and a half pages out of forty. That is a serious misallocation.
@@ -69,7 +78,7 @@ Most IAM tooling fails because it models permissions as a single flat concept. T
                      "CAN_ASSUME role X", "CAN_READ datastore Y"
 ```
 
-The pipeline is always: **Grants − Constraints → Capabilities → Graph edges.** A connector collects grants and constraints. The Edge Node computes capabilities. Only capabilities become edges.
+The pipeline is always: **Grants − Constraints → Capabilities → Graph edges.** A connector collects grants and constraints. The Edge Collector computes capabilities. Only capabilities become edges.
 
 ### 1.2 The principal taxonomy
 
@@ -231,7 +240,7 @@ Subtleties that must be encoded:
 - **Resource Control Policies (RCPs)** are the newer org-level constraint on resource policies. Same "cap, don't grant" semantics.
 - **`NotAction` / `NotResource`** invert set semantics and are a common source of policy-analysis bugs. Handle explicitly; do not treat as sugar.
 
-### 3.2 Representation in the Edge Node
+### 3.2 Representation in the Edge Collector
 
 Store evaluation as a **capability set**, not as parsed policy:
 
@@ -264,7 +273,7 @@ Store evaluation as a **capability set**, not as parsed policy:
 | `HARD` | Requires something an attacker is unlikely to obtain (`aws:MultiFactorAuthPresent`, hardware-bound) | heavily reduced |
 | `UNSATISFIABLE` | Cannot be met (references a nonexistent principal/tag) | edge not created |
 
-Resolving satisfiability requires environmental context — do we know the attacker's likely position? — so it is computed at the Edge Node where that context exists, and shipped as a classification rather than as a raw condition block.
+Resolving satisfiability requires environmental context — do we know the attacker's likely position? — so it is computed at the Edge Collector where that context exists, and shipped as a classification rather than as a raw condition block.
 
 ### 3.3 Action-to-capability mapping
 
@@ -471,7 +480,7 @@ Policy-hash equivalence classes are underrated: large orgs deploy the same role 
    Path engine invalidates paths through changed edges
 ```
 
-**Realistic budget:** a 400-account AWS estate should complete a full closure in under 30 minutes on the Edge Node profile L, and an incremental update in under one second. If the design cannot hit those, the product cannot be near-real-time, and near-real-time is what makes the change feed valuable.
+**Realistic budget:** a 400-account AWS estate should complete a full closure in under 30 minutes on the Edge Collector Edge L, and an incremental update in under one second. If the design cannot hit those, the product cannot be near-real-time, and near-real-time is what makes the change feed valuable.
 
 ---
 
@@ -1470,7 +1479,7 @@ Cloud Infrastructure Entitlement Management is the discipline of measuring and r
   AD     4624/4768/4769 events, last logon timestamps
 ```
 
-All of this is read and aggregated **at the Edge Node**. Only the derived counts and the proposed policy leave — usage data is extremely sensitive and voluminous, so this is another case where the privacy architecture is also the efficient architecture.
+All of this is read and aggregated **at the Edge Collector**. Only the derived counts and the proposed policy leave — usage data is extremely sensitive and voluminous, so this is another case where the privacy architecture is also the efficient architecture.
 
 ### 19.3 The metrics
 

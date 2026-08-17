@@ -7,6 +7,43 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
+## 0. Handoff alignment
+
+```
+  CONFIRMED by the handoff
+    · one deployment per customer, customer-side          §2, §4
+    · collector produces facts; SaaS owns persistence,
+      analytics and the graph                             §4
+    · tenant isolation via tenant_id and certificate
+      identity                                            §32
+
+  CHANGED by the handoff
+    · MULTIPLE COLLECTORS PER CUSTOMER IS THE NORM, not the
+      exception. The ceiling (12/64/1TB) means a large estate is
+      several collectors, not one big one.                 §5, §19.2
+    · agents have PRIMARY and optional SECONDARY collector
+      assignments                                          §19.3
+    · connectors have SINGLE ACTIVE OWNERSHIP to avoid duplicate
+      collection                                           §19.3
+    · "SaaS performs global entity correlation; collectors do not
+      need east-west communication"                        §19.3
+      ⚠ this contradicts our Resolution Directory (engines/05 §3.4),
+        and it works only if facts are plaintext. ESCALATION E8.
+    · tenant_id is MANDATORY on every Security Fact          §9.1
+      ⚠ reverses our removal in §2.1 below.
+```
+
+---
+
 ## 1. The model, stated precisely
 
 ```
@@ -24,7 +61,7 @@
 
 Three commitments follow, and each one simplifies the architecture:
 
-1. **One appliance serves one customer.** No shared appliance, ever.
+1. **One collector serves one customer.** No shared collector, ever.
 2. **The customer's environment determines what gets installed.** A cloud-only customer never receives on-prem collectors. An organisation without Kubernetes never sees the Kubernetes connector deployed.
 3. **The catalog is the map, the deployment is the territory.** Every connector is browsable; a small subset is live.
 
@@ -54,14 +91,14 @@ The distinction that was buried in the earlier documents, and the reason the que
 ```
    WHAT WE DO NOT NEED TO BUILD
      ✕ tenant_scoped field on connector manifests   (retract 08 §6.2)
-     ✕ per-tenant data isolation inside an appliance
+     ✕ per-tenant data isolation inside a collector
      ✕ tenant-aware query paths and RBAC in the pipeline
      ✕ noisy-neighbour resource governance between customers
      ✕ the cross-customer breach risk class, entirely
 
    WHAT WE MUST BUILD INSTEAD
      + a fleet management plane across customer deployments
-     + version and content distribution across N appliances
+     + version and content distribution across N collectors
      + remote diagnostics that work WITHOUT access to customer data
      + per-customer onboarding that scales to the next customer
 ```
@@ -70,7 +107,7 @@ The trade is favourable. Logical isolation is a permanent correctness burden car
 
 ### 2.1 So where does `tenant_id` go? Nowhere.
 
-Asked directly on 2026-08-13: *if we deploy one appliance per customer, why carry a tenant identifier at all?* The answer is that we should not, and the schemas have been corrected.
+Asked directly on 2026-08-13: *if we deploy one collector per customer, why carry a tenant identifier at all?* The answer is that we should not, and the schemas have been corrected.
 
 ```
    REMOVED
@@ -80,7 +117,7 @@ Asked directly on 2026-08-13: *if we deploy one appliance per customer, why carr
      tenant_scoped from the connector manifest      (08 §6.2)
 
    WHY IT WAS NEVER NEEDED
-     Inside the appliance, every entity, edge and fact belongs to one
+     Inside the collector, every entity, edge and fact belongs to one
      customer by construction. A discriminator that always holds the
      same value is not a discriminator — it is redundant bytes on every
      record and, worse, an invitation to build tenant-aware query paths
@@ -133,7 +170,7 @@ One thing that looks like tenancy is not, and must survive: the tokenization key
 
 ```
    "Your data is processed on hardware you own, in your building,
-    by an appliance no other customer touches, and what reaches our
+    by a collector no other customer touches, and what reaches our
     console is tokenized with a key we never receive."
 
    Versus a multi-tenant competitor:
@@ -159,7 +196,7 @@ The privacy architecture handles this better than expected:
           │
           │ analyst opens a finding for Customer A
           ▼
-   Browser calls CUSTOMER A's Edge Node directly to de-tokenize
+   Browser calls CUSTOMER A's Edge Collector directly to de-tokenize
      requires: network reach to A's Edge
              + a SaaS-issued JWT scoped to that analyst
              + Customer A's LOCAL RBAC permitting it
@@ -179,7 +216,7 @@ This is worth designing deliberately rather than discovering later. It is also a
 
 ### 3.1 Network reach becomes the practical constraint
 
-The awkward part. De-tokenization requires the analyst's browser to reach the customer's Edge Node.
+The awkward part. De-tokenization requires the analyst's browser to reach the customer's Edge Collector.
 
 ```
    OPTIONS, in order of preference
@@ -212,33 +249,33 @@ Option 1 is the realistic default for an MSSP engagement, and it should be part 
 ```
   ARCHETYPE 1 — CLOUD-ONLY
     customer runs AWS/Azure/GCP, IdP is Entra or Okta, no data centre
-    DEPLOY   Edge Node in their VPC/VNet, private subnet, no public IP
+    DEPLOY   Edge Collector in their VPC/VNet, private subnet, no public IP
              workload identity, no stored credentials
     ENABLE   cloud + IdP + code connectors
     OMIT     AD, AD CS, network device connectors, satellite collectors
-    SIZE     profile S or M, all-in-one
+    SIZE     Edge S or M, all-in-one
 
   ARCHETYPE 2 — ON-PREM HEAVY
     customer runs AD, VMware, on-prem databases, physical network
-    DEPLOY   Edge Node as a VM in the data centre
+    DEPLOY   Edge Collector as a VM in the data centre
     ENABLE   AD, AD CS, VMware, database, firewall, syslog, flow
     OMIT     cloud connectors beyond whatever little cloud exists
-    SIZE     profile M or L, scanner role split if DSPM is in scope
+    SIZE     Edge M or L, scanner role split if DSPM is in scope
     NOTE     AD collection profile must be handed to their SOC to
              allowlist — LDAP sweeps look like reconnaissance
 
   ARCHETYPE 3 — HYBRID (the common case)
     both, plus federation between them
-    DEPLOY   Edge Node on-prem + Edge Node in cloud
+    DEPLOY   Edge Collector on-prem + Edge Collector in cloud
              resolution primary elected on-prem (identity authority)
     ENABLE   everything relevant, including federation trust collection
-    SIZE     profile L
+    SIZE     Edge L
     NOTE     this is where the hybrid attack path lives — the reason
              the customer bought the product
 
   ARCHETYPE 4 — SEGMENTED / REGULATED
     OT, PCI, air-gapped or otherwise isolated zones
-    DEPLOY   Edge Node in the main zone
+    DEPLOY   Edge Collector in the main zone
              lightweight satellite collectors in each segment
              (collection only — no analytics, no vault, no state)
     ENABLE   per-zone, with the customer's explicit approval per source
@@ -248,7 +285,7 @@ Option 1 is the realistic default for an MSSP engagement, and it should be part 
     under 500 hosts, one cloud, one IdP
     DEPLOY   single all-in-one VM
     ENABLE   6-10 connectors
-    SIZE     profile S
+    SIZE     Edge S
 ```
 
 ### 4.1 The deployment survey
@@ -262,7 +299,7 @@ Onboarding starts with a short questionnaire that resolves the archetype, then d
    4. Kubernetes? Managed or self-hosted?
    5. Source control and CI/CD?
    6. Which segmented zones exist (OT, PCI, air-gapped)?
-   7. Where may the Edge Node run, and what egress is permitted?
+   7. Where may the Edge Collector run, and what egress is permitted?
    8. Who operates it — customer staff, or us?
    9. Is response ever in scope, or read-only permanently?
   10. What must never be collected? (data sensitivity boundaries)
@@ -318,7 +355,7 @@ The one genuinely new requirement. It sits *above* the per-customer Controller.
   │ ...                                                         │
   ├─────────────────────────────────────────────────────────────┤
   │ FLEET HEALTH                                                │
-  │   appliance versions   2.1.0 (9) · 2.0.4 (3)  [ stage ]     │
+  │   collector versions   2.1.0 (9) · 2.0.4 (3)  [ stage ]     │
   │   content versions     current (11) · 1 behind (1)          │
   │   certs expiring <30d  2   [ renew ]                        │
   │   offline >1h          0                                    │
@@ -333,10 +370,10 @@ The one genuinely new requirement. It sits *above* the per-customer Controller.
 ### 6.1 What the fleet plane must do
 
 ```
-  DEPLOY     provision a new customer appliance from an archetype
+  DEPLOY     provision a new customer collector from an archetype
              template; enrollment token; connector set preselected
   MONITOR    health, coverage, freshness, queue depth across all
-  UPDATE     stage appliance and content versions across the fleet,
+  UPDATE     stage collector and content versions across the fleet,
              canary → subset → all, with per-customer pinning
   DIAGNOSE   remote troubleshooting WITHOUT access to customer data
              (redacted bundles, metrics, journal replay initiated
@@ -370,7 +407,7 @@ The multi-instance model moves cost from engineering to operations, and that mus
 
 ```
    PER CUSTOMER, ONGOING
-     1 appliance to keep patched, upgraded, and healthy
+     1 collector to keep patched, upgraded, and healthy
      N connector credentials to rotate
      1 content update stream to keep current
      1 set of coverage gaps to chase
@@ -382,7 +419,7 @@ The multi-instance model moves cost from engineering to operations, and that mus
                      entire operational model
 
    DESIGN CONSEQUENCES
-     - the appliance must self-heal aggressively; a customer visit
+     - the collector must self-heal aggressively; a customer visit
        to fix a stuck connector is unaffordable
      - upgrades must be staged, reversible, and never require
        customer downtime
@@ -390,7 +427,7 @@ The multi-instance model moves cost from engineering to operations, and that mus
      - onboarding must be repeatable to the point of being boring
 ```
 
-For a solo or small build, this argues strongly for the feasible options in `07 §5`: **fewer connectors, deeper, on fewer customers** — because every additional connector on every additional appliance is recurring operational surface.
+For a solo or small build, this argues strongly for the feasible options in `07 §5`: **fewer connectors, deeper, on fewer customers** — because every additional connector on every additional collector is recurring operational surface.
 
 ---
 
@@ -415,7 +452,7 @@ For a solo or small build, this argues strongly for the feasible options in `07 
   08 §6.2   RETRACT the `tenant_scoped` manifest field. Not needed.
             KEEP api_surface, functions, and execution placement —
             execution placement is now MORE relevant, since
-            Archetype 3 deploys two Edge Nodes per customer.
+            Archetype 3 deploys two Edge Collectors per customer.
 
   06, 07    The MSSP question these documents raised is now answered.
 ```
@@ -425,7 +462,7 @@ For a solo or small build, this argues strongly for the feasible options in `07 
 ## 9. New open questions
 
 ```
-  Q1  Who operates the appliance day to day — our staff, or the
+  Q1  Who operates the collector day to day — our staff, or the
       customer's? Changes the Controller's persona (05 §1) and the
       RBAC split entirely. Likely varies per customer, which means
       both must be supported.

@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 Everything upstream of the Fact Builder is mechanical — receive, parse, normalize, resolve, evaluate. Everything downstream is mechanical — tokenize, sign, queue, ship. **The Fact Builder is where the judgement lives.**
@@ -65,7 +74,7 @@ Fact identity is **not** `fact_id` (a per-emission ULID used only for transport 
       significant_attributes_signature
   )
 
-  No tenant component — one appliance serves one customer, and on
+  No tenant component — one collector serves one customer, and on
   the console side each customer's graph is a separate store
   (../09 §2.1).
 ```
@@ -115,7 +124,7 @@ An attribute is significant if changing it means **this is a different assertion
 }
 ```
 
-The alternative — one fact per (edge, source) — preserves provenance but multiplies wire volume by N and pushes arbitration to a place with less context. This keeps Model A's volume and Model B's provenance, and arbitration happens on the appliance where full plaintext context exists.
+The alternative — one fact per (edge, source) — preserves provenance but multiplies wire volume by N and pushes arbitration to a place with less context. This keeps Model A's volume and Model B's provenance, and arbitration happens on the collector where full plaintext context exists.
 
 ### 3.5 Confidence arbitration
 
@@ -158,7 +167,7 @@ The alternative — one fact per (edge, source) — preserves provenance but mul
 
 ### 3.7 Emission policy — where 12 MB/day comes from
 
-Without this, the appliance re-sends the entire graph continuously.
+Without this, the collector re-sends the entire graph continuously.
 
 ```
   NEW fact                        → emit immediately
@@ -192,7 +201,7 @@ Without this, the appliance re-sends the entire graph continuously.
 
 ## 4. Considerations
 
-**Idempotency on replay is mandatory.** After a partition the appliance resends; after a restart it may rebuild from local state. The console upserts on semantic identity, taking `max(last_seen)`, `min(first_seen)`, and the highest-confidence source. Getting this wrong produces duplicate edges, which inflate path counts and destroy trust in every number shown.
+**Idempotency on replay is mandatory.** After a partition the collector resends; after a restart it may rebuild from local state. The console upserts on semantic identity, taking `max(last_seen)`, `min(first_seen)`, and the highest-confidence source. Getting this wrong produces duplicate edges, which inflate path counts and destroy trust in every number shown.
 
 **The merge window is a real trade.** Merging forever gives maximum reduction and loses the ability to say "this edge was observed 400 times yesterday and twice today." Bucketed observation counts per period are a reasonable middle.
 

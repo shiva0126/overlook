@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 The Permission Closure Engine answers one question for every principal in the environment: **what can this identity actually do, right now, after every layer of policy has been evaluated?**
@@ -134,7 +143,7 @@ Conditions must survive the trip, classified rather than raw:
 | `HARD` | Requires something unlikely to be obtained (`MultiFactorAuthPresent`, hardware-bound) | heavily reduced |
 | `UNSATISFIABLE` | References a nonexistent principal or tag | **edge not created** |
 
-Classifying satisfiability needs environmental context, which is why it happens on the appliance and ships as a class rather than a raw condition block.
+Classifying satisfiability needs environmental context, which is why it happens on the collector and ships as a class rather than a raw condition block.
 
 ### 3.5 Action-to-capability mapping
 
@@ -298,7 +307,7 @@ Verify only what a human will be shown. Simulating everything is impossible; sim
 ## 8. Example: Meridian, closure across 42 accounts
 
 ```
-  INPUT, band 2, EDGE-CLD
+  INPUT, band 2, COL-CLD
     41 AWS accounts (one circuit-broken)
       8,400 roles · 2,100 users · 21,000 policies
       ~180,000 policy statements · 4 SCPs · 62 permission boundaries
@@ -365,7 +374,7 @@ Verify only what a human will be shown. Simulating everything is impossible; sim
     ~2.1 million capability entries
     → ~310,000 graph edges after grouping and pattern preservation
 
-  TIMING (EDGE-CLD, profile M)
+  TIMING (COL-CLD, Edge M)
     full closure          26 minutes
     incremental, one policy edit at 14:22 the next day:
       affected set = 1 principal + 11 who can assume it

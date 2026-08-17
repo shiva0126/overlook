@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 Two capabilities that share one property: both are byproducts of design decisions already made, and both are nearly free.
@@ -106,7 +115,7 @@ A byproduct of the graph writer, not a separate system (`../engines/09 §3.6`).
 ```
   every graph write → diff → ChangeEvent
     { type, subject, predicate, object, before, after,
-      detected_at, source, edge_node_id, significance }
+      detected_at, source, collector_id, significance }
 
   SIGNIFICANCE IS COMPUTED, NOT RAW
     created a new path to a crown jewel        → CRITICAL

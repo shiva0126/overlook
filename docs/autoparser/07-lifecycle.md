@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 A frozen parser is correct on the day it is frozen and decays from then on. Vendors change log formats in patch releases without notice, devices are upgraded, and applications are rewritten.
@@ -170,12 +179,12 @@ A parser does not announce that it has stopped working. Three independent signal
 ### 7.1 The sharing model
 
 ```
-  PRIVATE       stays on the appliance. Default for anything
+  PRIVATE       stays on the collector. Default for anything
                 derived from a customer-built application, because
                 the TEMPLATE PATTERNS THEMSELVES may reveal
                 internal system design.
 
-  DEPLOYMENT    shared across one customer's Edge Nodes.
+  DEPLOYMENT    shared across one customer's Edge Collectors.
                 Automatic — same customer, same trust boundary.
 
   CONTRIBUTED   offered back to Overlook, reviewed, and shipped as

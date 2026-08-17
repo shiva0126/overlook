@@ -7,6 +7,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## How to read this
 
 One fictional customer, fully deployed. Every source, every component, every engine, traced from the wire to the finding. The point is to test whether the architecture in docs 01–11 actually holds under a realistic flood.
@@ -62,9 +71,9 @@ This is the **Hybrid archetype** (`09 §4, Archetype 3`) — the case Overlook e
  │  Palo Alto ×2 ──syslog/TLS─┤                                       │
  │  FortiGate ×2 ──syslog/TLS─┤                                       │
  │  Core switches ──NetFlow───┤     ┌──────────────────────────────┐  │
- │  VMware vCenter ──API──────┼────►│      EDGE-DC1                │  │
- │  Oracle / MSSQL ──JDBC─────┤     │      profile L               │  │
- │  File shares ──SMB─────────┤     │      32 vCPU / 128 GB / 8 TB │  │
+ │  VMware vCenter ──API──────┼────►│      COL-DC1                │  │
+ │  Oracle / MSSQL ──JDBC─────┤     │  3× Edge L (12/64/1TB each)  │  │
+ │  File shares ──SMB─────────┤     │                              │  │
  │  Forcepoint DLP ──API──────┤     │                              │  │
  │  CrowdStrike ──API─────────┤     │  ROLE: resolution PRIMARY    │  │
  │                            │     │  (identity authority is AD)  │  │
@@ -77,9 +86,9 @@ This is the **Hybrid archetype** (`09 §4, Archetype 3`) — the case Overlook e
  ┌─ MERIDIAN AWS (private subnet, no public IP) ─┼─────────────────────┐
  │                                               ▼                     │
  │  AWS 42 accts ──IRSA──┐        ┌──────────────────────────────┐    │
- │  Azure 18 subs ──MI───┤        │      EDGE-CLD                │    │
- │  GCP 6 projects ──WIF─┼───────►│      profile M               │    │
- │  Entra ID ──Graph─────┤        │      16 vCPU / 64 GB / 2 TB  │    │
+ │  Azure 18 subs ──MI───┤        │      COL-CLD                │    │
+ │  GCP 6 projects ──WIF─┼───────►│  1× Edge M (8/32/500GB)      │    │
+ │  Entra ID ──Graph─────┤        │  8 vCPU / 32 GB / 500 GB     │    │
  │  GitHub ──App─────────┤        │                              │    │
  │  EKS/AKS/GKE ──API────┘        └───────────┬──────────────────┘    │
  │                                            │                       │
@@ -92,9 +101,11 @@ This is the **Hybrid archetype** (`09 §4, Archetype 3`) — the case Overlook e
                                         (tokens only)
 ```
 
-**Why two Edge Nodes.** Not for capacity — for **reach and trust**. `EDGE-DC1` needs LDAP line-of-sight to domain controllers and must receive syslog and NetFlow from devices that will not route to the internet. `EDGE-CLD` uses workload identity (IRSA, Managed Identity, Workload Identity Federation) so **no cloud credentials are ever stored anywhere**. Splitting them means neither holds credentials it does not need.
+**Why four collectors, not two.** The handoff ceiling (12 vCPU / 64 GB / 1 TB) means Meridian's ~36,000 EPS of firewall syslog plus NetFlow cannot land on one box: at the ~10–15K sustained EPS full-processing target (handoff §18), that is **three Edge L collectors on-prem** plus one Edge M in cloud. Agents are assigned a primary and a secondary collector; each connector has a single active owner (handoff §19.3).
 
-**Why DC1 is resolution primary.** Active Directory is the authoritative source of workforce identity here. Canonical keys derive from it, so the Resolution Directory lives beside it and `EDGE-CLD` queries it (`01 §8.3`).
+**Why the split is on-prem versus cloud.** Not for capacity — for **reach and trust**. `COL-DC1` needs LDAP line-of-sight to domain controllers and must receive syslog and NetFlow from devices that will not route to the internet. `COL-CLD` uses workload identity (IRSA, Managed Identity, Workload Identity Federation) so **no cloud credentials are ever stored anywhere**. Splitting them means neither holds credentials it does not need.
+
+**Why DC1 is resolution primary.** Active Directory is the authoritative source of workforce identity here. Canonical keys derive from it, so the Resolution Directory lives beside it and `COL-CLD` queries it (`01 §8.3`).
 
 **Both share one `deployment_key`.** Generated at enrollment on DC1, wrapped by Meridian's KMS, distributed to CLD through customer-controlled enrollment. If they did not share it, the same person would tokenize differently on each node and the hybrid graph would silently split into two disconnected halves (`09 §2.2`).
 
@@ -124,7 +135,7 @@ This is the **Hybrid archetype** (`09 §4, Archetype 3`) — the case Overlook e
   TOTAL                       ~2.2 TB/day
 ```
 
-**Note what is journaled.** Only ~120 MB of the 2.2 TB gets durably journaled before acknowledgement — the agent and webhook data, because it is unrecoverable if dropped (`04 §2.1`). Everything else is either re-fetchable by cursor (PULL) or aggregated at receive (STREAM). This is why the appliance survives the flood: **we do not try to durably store 2.2 TB/day.**
+**Note what is journaled.** Only ~120 MB of the 2.2 TB gets durably journaled before acknowledgement — the agent and webhook data, because it is unrecoverable if dropped (`04 §2.1`). Everything else is either re-fetchable by cursor (PULL) or aggregated at receive (STREAM). This is why the collector survives the flood: **we do not try to durably store 2.2 TB/day.**
 
 ## 4. The two regimes
 
@@ -157,7 +168,7 @@ The flood, and the clearest illustration of the architecture.
 
 ```
   WHAT ARRIVES
-    4 devices, syslog over TCP/TLS to EDGE-DC1:6514
+    4 devices, syslog over TCP/TLS to COL-DC1:6514
     ~36,000 events/sec sustained, 3.1 billion/day
     traffic logs, threat logs, system logs, config-change logs
 ```
@@ -220,7 +231,7 @@ The far more valuable firewall data arrives on a completely different path: a **
 Same shape, larger numbers.
 
 ```
-  6 core switches → NetFlow v9 → EDGE-DC1:2055
+  6 core switches → NetFlow v9 → COL-DC1:2055
   4.1 billion records/day
 
   E1 STREAM AGGREGATOR
@@ -254,7 +265,7 @@ The single richest source in this deployment, and nothing about it resembles the
     2.8 GB per full sweep
 ```
 
-**Stage 6 — RESOLVE.** Each user yields a canonical key by priority (`01 §6.2`): `mail` attribute wins → `email:priya.s@meridian.com`. Aliases recorded: `adguid:…`, `sam:MERIDIAN\priyas`, `upn:…`. All of it lands in the **Resolution Directory** so `EDGE-CLD` can resolve the same person later.
+**Stage 6 — RESOLVE.** Each user yields a canonical key by priority (`01 §6.2`): `mail` attribute wins → `email:priya.s@meridian.com`. Aliases recorded: `adguid:…`, `sam:MERIDIAN\priyas`, `upn:…`. All of it lands in the **Resolution Directory** so `COL-CLD` can resolve the same person later.
 
 **Stage 7 — DERIVE.** This is where AD becomes a graph rather than a directory.
 
@@ -369,7 +380,7 @@ That last `elevateAccess` chain is one edge that connects the identity plane to 
     Total    ~18 GB of policy documents per full sweep
 ```
 
-**Stage 7 — E7 PERMISSION CLOSURE.** The most expensive computation in the appliance, and the one that produces the most value.
+**Stage 7 — E7 PERMISSION CLOSURE.** The most expensive computation in the collector, and the one that produces the most value.
 
 ```
   FOR EACH PRINCIPAL, evaluate in strict precedence (02 §3.1):
@@ -390,7 +401,7 @@ That last `elevateAccess` chain is one edge that connects the identity plane to 
     → ~310,000 graph edges after grouping and pattern preservation
 
   TIMING
-    initial full closure   ~26 minutes on EDGE-CLD (profile M)
+    initial full closure   ~26 minutes on COL-CLD (Edge M)
     incremental on change  ~600 ms for a typical policy edit
 ```
 
@@ -511,7 +522,7 @@ Both are **overlay connectors** (`03 §2.4`): they create almost no nodes. They 
 ## 12. Physical placement
 
 ```
-  ENGINE                          EDGE-DC1        EDGE-CLD
+  ENGINE                          COL-DC1        COL-CLD
   ──────────────────────────────  ─────────────   ─────────────
   E1  Stream Aggregator           ✓ heavy         —
   E2  Source Fingerprint          ✓               —
@@ -607,7 +618,7 @@ The moment everything exists for.
   ALIASES         adguid, sam, upn, ARN, GitHub login, EDR user string
 ```
 
-Seven of the eight matched deterministically on a verified corporate email. The eighth — `CORP\priyas` from CrowdStrike — matched via the **Resolution Directory**, which knew the alias because AD had registered it hours earlier on a different Edge Node.
+Seven of the eight matched deterministically on a verified corporate email. The eighth — `CORP\priyas` from CrowdStrike — matched via the **Resolution Directory**, which knew the alias because AD had registered it hours earlier on a different Edge Collector.
 
 **That is why the Resolution Directory is mandatory rather than optional** (`01 §8.3`). Without it, CrowdStrike's view of Priya is a separate node and every path through her endpoint breaks.
 
@@ -732,7 +743,7 @@ Meridian owns CrowdStrike, Forcepoint, four firewalls, AD, Entra and three cloud
      failing. Default ceiling is 30% of Meridian's quota — the
      other 70% is theirs, always.
 
-  4  EDGE-CLD LOSES ITS LINK TO EDGE-DC1
+  4  COL-CLD LOSES ITS LINK TO COL-DC1
      resolution falls back to a cached alias set. New cloud entities
      resolve with lower confidence and are marked "resolution
      degraded" rather than silently mis-merged. Bias is toward
@@ -749,7 +760,7 @@ Meridian owns CrowdStrike, Forcepoint, four firewalls, AD, Entra and three cloud
      it cannot. The scanner runs in its own process with a hard
      ceiling and the lowest priority, and cannot borrow capacity
      from the identity or realtime pools. This is the single most
-     common way appliances like this fall over.
+     common way collectors like this fall over.
 ```
 
 ---
@@ -757,7 +768,7 @@ Meridian owns CrowdStrike, Forcepoint, four firewalls, AD, Entra and three cloud
 ## 19. The whole thing in one frame
 
 ```
-  IN     2.2 TB/day across 10 source types, 2 Edge Nodes,
+  IN     2.2 TB/day across 10 source types, 2 Edge Collectors,
          8,500 agents, 4 ingress classes
 
   KEPT   ~2.9 million graph edges, bitemporal, confidence-scored,

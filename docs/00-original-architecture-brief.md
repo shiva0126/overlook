@@ -888,7 +888,7 @@ External Model
 
 # 21. CSPM
 
-The Edge Node should provide cloud security posture capabilities for:
+The Edge Collector should provide cloud security posture capabilities for:
 
 - AWS
 - Azure
@@ -1446,7 +1446,7 @@ For segmented environments, optional lightweight satellite collectors may be add
                                OVERLOOK SaaS
 ```
 
-The Edge Node should initiate customer-side API calls.
+The Edge Collector should initiate customer-side API calls.
 
 Overlook SaaS should normally not directly access customer cloud accounts.
 
@@ -1736,7 +1736,7 @@ PRIORITIZE
 BREAK PATH
 ```
 
-The **Edge Node** provides broad environment intelligence.
+The **Edge Collector** provides broad environment intelligence.
 
 The **Agent** provides runtime visibility and host response.
 

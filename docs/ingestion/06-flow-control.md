@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. What it is
 
 What happens when more arrives than can be processed.
@@ -12,7 +21,7 @@ Two separate mechanisms that are often confused:
 
 ```
   INBOUND FLOW CONTROL   this document
-    the appliance is saturated. Backpressure propagates to receive,
+    the collector is saturated. Backpressure propagates to receive,
     which sheds by priority class.
 
   OUTBOUND RATE GOVERNANCE   ../engines/01 §3.4
@@ -145,7 +154,7 @@ The failure this whole mechanism exists to prevent.
   Refusing to accept is honest. Accepting and discarding is not.
 ```
 
-**The 97% behaviour is deliberate.** An appliance that stops ingesting but keeps answering resolve queries is degraded; one that fills its disk and stops entirely is an outage that also takes down every analyst's investigation.
+**The 97% behaviour is deliberate.** A collector that stops ingesting but keeps answering resolve queries is degraded; one that fills its disk and stops entirely is an outage that also takes down every analyst's investigation.
 
 ---
 
@@ -164,10 +173,10 @@ Flow control at the CPU level rather than the queue level.
            RESERVED, never yielded
 
   Pool D's reservation is what keeps the analyst-facing latency
-  budget (150 ms p95) intact while the appliance is under ingest
+  budget (150 ms p95) intact while the collector is under ingest
   pressure. Pool C's hard cap is what stops a classification crawl
   starving identity collection — the single most common way an
-  appliance like this falls over.
+  collector like this falls over.
 ```
 
 ---
@@ -189,7 +198,7 @@ Flow control at the CPU level rather than the queue level.
 
 ## 8. Considerations
 
-**Backpressure should be rare and short.** If it is routine, the appliance is undersized and the answer is a bigger profile, not better shedding. Persistent shedding must be surfaced as a sizing recommendation in the Controller, not absorbed silently.
+**Backpressure should be rare and short.** If it is routine, the collector is undersized and the answer is a bigger profile, not better shedding. Persistent shedding must be surfaced as a sizing recommendation in the Controller, not absorbed silently.
 
 **Shedding must be visible in coverage, not only in logs.** If P3 flow was sampled for two hours, the reachability edges from that window carry lower confidence and the coverage view should say so. Otherwise an analyst reads a gap as an absence.
 
@@ -243,7 +252,7 @@ Flow control at the CPU level rather than the queue level.
     ⚠ SHEDDING EVENT · 02:19-02:36 · 17 minutes
       P5 shed: 1,300 records from 10.4.9.22:514
       Cause: nightly full enumeration overlapped Parquet compaction
-      RECOMMENDATION: stagger the compaction window, or profile L
+      RECOMMENDATION: stagger the compaction window, or Edge L
       is approaching its ceiling on this workload
 ```
 

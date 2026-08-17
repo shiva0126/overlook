@@ -4,11 +4,20 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 The Privacy Gate is the boundary. Everything that leaves the customer's environment passes through it, and nothing bypasses it.
 
-It is the smallest engine in the appliance and the one with the most consequential failure mode: every other engine can be wrong and produce a bad finding; this one can be wrong and produce a breach.
+It is the smallest engine in the collector and the one with the most consequential failure mode: every other engine can be wrong and produce a bad finding; this one can be wrong and produce a breach.
 
 It is also the mechanism behind the only competitive claim that survived the market survey — *residency is not blindness* (`../01 §2.3`). That claim is true because of what happens in these few hundred lines, or it is not true at all.
 
@@ -58,7 +67,7 @@ Order matters. Validation last, so it verifies what will actually be transmitted
         → IDN-9f3a7c21e845b0d6
 
   PROPERTIES
-    deterministic   every Edge Node in the deployment produces the
+    deterministic   every Edge Collector in the deployment produces the
                     same token for the same entity — which is what
                     makes the hybrid graph join at all
     irreversible    without the key, the console cannot recover the
@@ -68,7 +77,7 @@ Order matters. Validation last, so it verifies what will actually be transmitted
     rotatable       with a dual-token transition window, painfully
 ```
 
-**The key never reaches Overlook.** Generated at enrollment, wrapped by the customer's KMS/HSM, distributed to additional Edge Nodes through customer-controlled enrollment. If it ever transited us, the entire claim collapses (`../09 §2.2`).
+**The key never reaches Overlook.** Generated at enrollment, wrapped by the customer's KMS/HSM, distributed to additional Edge Collectors through customer-controlled enrollment. If it ever transited us, the entire claim collapses (`../09 §2.2`).
 
 ### 3.3 The allow-list — and why it must not be a deny-list
 
@@ -141,15 +150,15 @@ That screen converts the privacy claim from a promise into something the custome
 
 **Tokenization is only irreversible if the keyspace is large.** Email addresses are a small, guessable space; a leaked `deployment_key` makes every token dictionary-attackable. This is why the key is customer-held and per-deployment — the compromise is contained, and it requires compromising the customer, at which point the tokens are the least of their problems.
 
-**Determinism across Edge Nodes is a hard requirement, not an optimisation.** Meridian's two nodes must produce identical tokens for Priya or the hybrid path does not exist. This is the same reason the canonical key rules are shipped configuration.
+**Determinism across Edge Collectors is a hard requirement, not an optimisation.** Meridian's two nodes must produce identical tokens for Priya or the hybrid path does not exist. This is the same reason the canonical key rules are shipped configuration.
 
 **Bucket boundaries are a policy decision with analytical consequences.** Too coarse and crown-jewel scoring degrades; too fine and the bucket is identifying. They belong in the customer-visible policy, not in code.
 
-**Evidence references leave; evidence does not.** A `sha256` hash crosses the boundary. The 4 KB policy document it points at stays on the appliance, retrievable only through the Controller with RBAC and audit.
+**Evidence references leave; evidence does not.** A `sha256` hash crosses the boundary. The 4 KB policy document it points at stays on the collector, retrievable only through the Controller with RBAC and audit.
 
 **Policy changes need a preview.** An operator changing the allow-list should see the effect on the last 24 hours of facts before committing — what would additionally be stripped, what console capability would be lost.
 
-**Key rotation is real and must be designed, not deferred.** Rotation re-tokenizes the entire graph. A dual-token transition window — the appliance emits both old and new tokens for one sync cycle, the console merges — is the workable approach.
+**Key rotation is real and must be designed, not deferred.** Rotation re-tokenizes the entire graph. A dual-token transition window — the collector emits both old and new tokens for one sync cycle, the console merges — is the workable approach.
 
 ---
 
@@ -160,9 +169,9 @@ That screen converts the privacy claim from a promise into something the custome
 | Deny-list instead of allow-list | **Silent data leak** on every new connector field | Allow-list only; new fields dropped by default |
 | Validation bypassed for "urgent" facts | Breach | No bypass path exists in the code |
 | Key unavailable | Outbound halts | Halt is correct; alarm loudly; never fall back to plaintext |
-| Non-deterministic tokenization | Graph splits between Edge Nodes, silently | Config hash asserted on sync; mismatch alarms |
+| Non-deterministic tokenization | Graph splits between Edge Collectors, silently | Config hash asserted on sync; mismatch alarms |
 | Bucket too fine | The bucket itself identifies | Bucket boundaries in customer-visible policy |
-| Token map compromised | De-tokenization possible by whoever holds it | Separately encrypted, access-audited, on the appliance only |
+| Token map compromised | De-tokenization possible by whoever holds it | Separately encrypted, access-audited, on the collector only |
 | Policy change with no preview | Console capability silently lost | Preview against recent facts before apply |
 
 ---

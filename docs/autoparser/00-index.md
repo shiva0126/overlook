@@ -3,7 +3,16 @@
 **Version:** 0.1
 **Date:** 2026-08-17
 **Status:** Architecture. No implementation.
-**Supersedes:** the deferral of E3 in `../10-appliance-stack-and-engines.md §4.2`. See §5.
+**Supersedes:** the deferral of E3 in `../10-collector-stack-and-engines.md §4.2`. See §5.
+
+---
+
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
 
 ---
 
@@ -195,7 +204,7 @@ The trajectory is clear: **unsupervised, open-model approaches now beat semi-sup
 
   CONSEQUENCES
     · LLM assistance must run LOCALLY, on a small model on the
-      appliance, or
+      collector, or
     · operate only on STRUCTURAL REPRESENTATIONS — templates with
       values stripped, field shapes, type distributions — which
       carry no customer data

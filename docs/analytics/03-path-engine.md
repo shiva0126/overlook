@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 Compute every plausible route from a start condition (`02`) to a crown jewel (`01`), rank them, collapse them, and report only what changed.
@@ -28,7 +37,7 @@ The engineering problem is computing 500,000 paths. The **product** problem is p
     a diff against the previous run — NEW paths notify
 
   RUNS ON
-    Mode 1: the appliance, against the local graph
+    Mode 1: the collector, against the local graph
     Mode 2: the console, against the merged token graph
     ⚠ the engine is IDENTICAL. Tokens traverse exactly like
       canonical keys — the algorithm never reads a value.
@@ -206,7 +215,7 @@ The claim that distinguishes this from a six-hourly batch (SCC runs every ~6 hou
     2.9M live edges · 47 crown jewels · 1,847 start conditions
     (312 human classes after equivalence clustering)
 
-  FULL RUN, nightly, EDGE-DC1 profile L
+  FULL RUN, nightly, COL-DC1 Edge L
     reverse BFS from 47 seeds
     raw paths found                         412,000
     after depth limit (8)                   188,000

@@ -7,6 +7,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## The two questions this document answers
 
 1. **How many connectors do we actually need, and what are they?**
@@ -434,14 +443,14 @@ Requirement 6 deserves emphasis: a connector that retries a bad credential in a 
 
 ### 5.1 The model
 
-All connectors are governed by one control loop on the Edge Node. There is no notion of some connectors being "live" and others "not yet built" — the fleet is a single scheduled system, and a connector that a customer has not configured is simply idle.
+All connectors are governed by one control loop on the Edge Collector. There is no notion of some connectors being "live" and others "not yet built" — the fleet is a single scheduled system, and a connector that a customer has not configured is simply idle.
 
 Within each cycle there is **dependency ordering**, because some connectors need the output of others to resolve entities correctly. This is the only sequencing in the design, and it operates on the timescale of a run.
 
 ```
    ┌───────────────────────────────────────────────────────────┐
    │                  CONNECTOR CONTROL LOOP                    │
-   │                     (Edge Node, R1/R2)                     │
+   │                     (Edge Collector, R1/R2)                     │
    │                                                            │
    │   SCHEDULER ──► DEPENDENCY GATE ──► DISPATCHER             │
    │       ▲                                   │                │
@@ -610,7 +619,7 @@ Not everything runs at the same rate. Each collector declares its own interval; 
 
 ### 7.1 Worker pools
 
-Separate pools by resource profile, because one pool means a DSPM scan starves the identity connectors — the single most common way an appliance like this falls over.
+Separate pools by resource profile, because one pool means a DSPM scan starves the identity connectors — the single most common way a collector like this falls over.
 
 ```
    POOL A — API/IO bound          most connectors
@@ -633,14 +642,14 @@ Separate pools by resource profile, because one pool means a DSPM scan starves t
 
 ### 7.2 Per-profile expectations
 
-Against the Edge Node profiles in `01-system-design.md` §10.3:
+Against the Edge Collector profiles in `01-system-design.md` §10.3:
 
 | Profile | Connectors configured | Concurrent workers | Full cycle | Incremental |
 |---|---|---|---|---|
 | S (<500 hosts) | 8–15 | 16 | ~20 min | ~2 min |
 | M (<5k hosts) | 15–30 | 32 | ~45 min | ~4 min |
 | L (<25k hosts) | 30–60 | 64 | ~90 min | ~8 min |
-| XL (25k+) | 60–118 | 128 (multi-node) | ~2.5 h | ~12 min |
+| *(beyond Edge L)* | add another collector — there is no XL | | | |
 
 These are targets to validate under load, not measurements. The number that actually matters is the **incremental** column — that is what determines whether the change feed feels live.
 
@@ -708,7 +717,7 @@ Coverage percentages tell the customer **what Overlook cannot see**. That builds
 
 ## 9. Credential brokering
 
-118 connectors means up to 118 credential sets — often more, since large customers have many cloud accounts. The Edge Node is therefore one of the most valuable targets in the environment.
+118 connectors means up to 118 credential sets — often more, since large customers have many cloud accounts. The Edge Collector is therefore one of the most valuable targets in the environment.
 
 ```
    BROKER MODEL
@@ -882,7 +891,7 @@ That last item is the one most likely to be skipped and the most expensive to sk
    Framework first: it is worth ~1,270 dev-days across the catalog
    Total build: ~730 dev-days ≈ 6 engineers × 6 months, five parallel tracks
 
-   ONE control loop on the Edge Node governs the whole fleet.
+   ONE control loop on the Edge Collector governs the whole fleet.
    Ordering exists only WITHIN a run cycle — five bands, gated on
    quorum rather than completion, because entity resolution needs
    identity authorities to land before anything that references them.

@@ -2,16 +2,46 @@
 
 **Version:** 0.1
 **Date:** 2026-08-14
-**Parent:** `../10-appliance-stack-and-engines.md`
+**Parent:** `../10-collector-stack-and-engines.md`
 **Status:** Architecture. No implementation.
+
+---
+
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
 
 ---
 
 ## What this series is
 
-One document per component in the appliance pipeline. Each explains **how that component works**, **what has to be considered when building it**, and **how it fails** — then ends with a worked example.
+One document per component in the collector pipeline. Each explains **how that component works**, **what has to be considered when building it**, and **how it fails** — then ends with a worked example.
 
 Every example uses the same customer: **Meridian Financial**, defined in `../12-end-to-end-deployment-story.md`. The examples are slices of one continuous story, so reading them in order traces a single piece of data from a firewall port to a finding on a screen.
+
+## ⚠ Where each engine runs, per handoff §3
+
+```
+  EDGE COLLECTOR        E15 orchestration · receive/journal/aggregator
+                        E2 fingerprint · E3 parser · E4 normalizer
+                        E5 enrichment · E6 entity resolution (LOCAL,
+                        lightweight — handoff §10) · E13 fact builder
+                        E14 privacy gate · sign and transport
+
+  OVERLOOK SAAS         E7 permission closure   ⚠ ESCALATION E4
+                        E8 escalation matcher
+                        E9/E10/E11 posture, correlation, classification
+                        E12 graph engine — the collector holds a
+                        BOUNDED ENTITY CACHE, not a graph (§10.1)
+
+  Documents for SaaS-side engines are retained: the engineering is
+  the same wherever it runs, and the boundary may move (E4).
+```
+
+---
 
 ## The pipeline
 
@@ -74,8 +104,8 @@ Every example uses the same customer: **Meridian Financial**, defined in `../12-
     2 AD forests · Entra ID · VMware · Oracle
     AWS 42 accounts · Azure 18 subs · GCP 6 projects
 
-  DEPLOYMENT   EDGE-DC1 (on-prem, profile L, resolution primary)
-               EDGE-CLD (AWS private subnet, profile M)
+  DEPLOYMENT   COL-DC1 (on-prem, Edge L, resolution primary)
+               COL-CLD (AWS private subnet, Edge M)
 
   THE PERSON   Priya S — developer, no admin rights anywhere,
                seen by 8 different sources under 8 different names

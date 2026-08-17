@@ -4,9 +4,18 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. What it is
 
-The appliance calls out and fetches. Complete, self-describing objects from an authenticated API, returned in full rather than as a stream of fragments.
+The collector calls out and fetches. Complete, self-describing objects from an authenticated API, returned in full rather than as a stream of fragments.
 
 This is the highest-value ingress class in the system — essentially all of IAM, cloud inventory, identity and posture arrives this way — and the one with the **lightest durability requirement**, because it is re-fetchable.
 
@@ -219,7 +228,7 @@ The one output of this class that carries real consequence.
   09:00  E15 dispatches aws.iam.roles for 41 accounts.
          41 leases claimed across the worker pool.
 
-  09:00  Each worker requests a credential handle. EDGE-CLD uses
+  09:00  Each worker requests a credential handle. COL-CLD uses
          IRSA, so there is no stored secret — the handle is an
          STS session, TTL 5 minutes.
 

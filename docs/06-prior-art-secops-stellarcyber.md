@@ -7,6 +7,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Why these two
 
 They are the two closest shipped analogues to parts of what Overlook proposes, and they fail in opposite directions:
@@ -168,11 +177,11 @@ And the boundary difference remains absolute: **everything goes to Google.** Res
 
 ### 3.2 What they got right that we should copy
 
-**Three deployment topologies from one product.** All-in-one, distributed, clustered — the same software, configured differently. This is precisely the shape our S/M/L/XL profiles (`01 §10.3`) and four-process boundary (`04 §26`) should take, and it is reassuring that someone shipped it. It also validates that "one appliance image, splittable by role" is achievable rather than aspirational.
+**Three deployment topologies from one product.** All-in-one, distributed, clustered — the same software, configured differently. This is precisely the shape our Edge S/M/L editions (`01 §10.3`) and four-process boundary (`04 §26`) should take, and it is reassuring that someone shipped it. It also validates that "one collector image, splittable by role" is achievable rather than aspirational.
 
 **Filtering before data leaves the source.** Their sensors apply traffic and application filters at the source rather than at a central ingestion point. That is the same principle as our aggregate-at-receive rule for flow data (`04 §6.2`) — and they market it as a differentiator, which suggests customers value it explicitly.
 
-**Multi-tenancy built in from inception.** Full isolation of data, per-tenant storage options, retention, policies, reporting, and per-tenant ML. Their MSSP business depends on it. **We deferred multi-tenancy as "not a prerequisite" (`04 §31`).** That is defensible for a single-appliance-per-customer model, but if MSSP is ever a target channel, retrofitting tenancy is one of the most expensive things a platform can do. This deserves an explicit decision rather than a default.
+**Multi-tenancy built in from inception.** Full isolation of data, per-tenant storage options, retention, policies, reporting, and per-tenant ML. Their MSSP business depends on it. **We deferred multi-tenancy as "not a prerequisite" (`04 §31`).** That is defensible for a single-collector-per-customer model, but if MSSP is ever a target channel, retrofitting tenancy is one of the most expensive things a platform can do. This deserves an explicit decision rather than a default.
 
 **Regional data residency with centralised aggregates.** They keep data physically resident in a site or region to avoid cross-border movement, while centralising aggregate statistics for a single-pane UI and GDPR compliance.
 
@@ -225,14 +234,14 @@ Also worth noting: their Data Processor is typically deployed **by the MSSP or t
 | | Google SecOps | Stellar Cyber | Overlook |
 |---|---|---|---|
 | Unit of work | Event | Event | **Relationship** |
-| Customer-side component | Forwarder (ships raw) | Sensor (filters, some processing) | **Edge Node (full analysis)** |
+| Customer-side component | Forwarder (ships raw) | Sensor (filters, some processing) | **Edge Collector (full analysis)** |
 | Where analysis happens | Vendor cloud | Central DP (customer/MSSP-hosted) | **Customer edge + vendor graph** |
 | What crosses the boundary | Everything | Filtered events / aggregates | **Tokenized facts only** |
 | Vendor can read customer data | Yes | N/A (self-hosted) | **No, by construction** |
 | Normalization schema | UDM | Internal | Security Fact + entity model |
 | Parser model | 1:1 with log type, content library | Connector library | 1:1 with source, content library |
 | Multi-tenancy | Vendor-managed | **From inception, MSSP-first** | Deferred — needs a decision |
-| Deployment topologies | Forwarder only | **All-in-one / distributed / clustered** | S/M/L/XL profiles |
+| Deployment topologies | Forwarder only | **All-in-one / distributed / clustered** | Edge S/M/L, hard ceiling |
 | Pricing | **Non-volumetric (per user)** | Volume/tenant based | Undecided — should be non-volumetric |
 | Attack paths / exposure graph | No | No | **Yes** |
 | AI/agent/MCP as graph entities | No | No | **Yes** |
@@ -264,7 +273,7 @@ Also worth noting: their Data Processor is typically deployed **by the MSSP or t
 
   C5  NAME THE DEPLOYMENT TOPOLOGIES EXPLICITLY
       Borrow Stellar Cyber's vocabulary: all-in-one, distributed,
-      clustered. Clearer than S/M/L/XL, which describes size rather
+      clustered. Clearer than Edge S/M/L, which describes size rather
       than shape. Use both: shape × size.
 
   C6  ADD A COMPETITIVE SECTION to the system design

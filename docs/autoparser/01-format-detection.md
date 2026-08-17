@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 Answer *what shape is this?* and, for anything structured, extract the fields for free.
@@ -122,7 +131,7 @@ The single most common real-world shape, and the one naive detectors get wrong.
     syslog → JSON              modern network devices
     syslog → CEF               security appliances
     syslog → key-value         FortiGate, many firewalls
-    syslog → free text         legacy Unix, older appliances
+    syslog → free text         legacy Unix, older devices
     JSON → base64 → JSON       cloud event wrappers
     JSON → embedded XML        Windows event forwarding
 
@@ -180,7 +189,7 @@ The single most common real-world shape, and the one naive detectors get wrong.
 
 **Structured does not mean parsed.** JSON gives fields for free and tells you nothing about which of them matters. The temptation is to declare victory at L1 because the output looks tidy.
 
-**Manual override must be first-class.** Some sources are genuinely unguessable — a proprietary appliance emitting a bespoke format. An operator who knows the answer should be able to say so, and that override should be shareable (`07`).
+**Manual override must be first-class.** Some sources are genuinely unguessable — a proprietary device emitting a bespoke format. An operator who knows the answer should be able to say so, and that override should be shareable (`07`).
 
 ---
 

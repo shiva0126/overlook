@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. What it is
 
 The source calls us. A single event arrives unsolicited over HTTPS, and **if we drop it, it is gone** — most webhook senders retry a handful of times and then give up permanently.
@@ -184,7 +193,7 @@ Low volume, high value density, and the strictest durability contract in the sys
 ## 10. Example: Meridian, one hour of GitHub webhooks
 
 ```
-  09:00-10:00, EDGE-CLD, 3 GitHub organisations
+  09:00-10:00, COL-CLD, 3 GitHub organisations
 
   41 deliveries received on
      POST /webhook/github/meridian-eng

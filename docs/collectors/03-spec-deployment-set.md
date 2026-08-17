@@ -10,6 +10,15 @@ These five connectors between them exercise **all four ingress classes** — PUL
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1 · `fortigate.firewall_policies`
 
 A configuration collector with hard dependencies on two others. Individually useless, collectively the source of all network reachability.
@@ -46,7 +55,7 @@ collector:
     failure_remediation: >
       Create a read-only REST API admin with an access profile
       granting Read on Firewall and System. Restrict by trusted
-      host to the Edge Node address.
+      host to the Edge Collector address.
 
   fetch:
     pagination: none          # FortiOS returns the full table

@@ -1,9 +1,18 @@
-# Overlook — Appliance Technology Stack and Engine Architecture
+# Overlook — Collector Technology Stack and Engine Architecture
 
 **Version:** 0.1
 **Date:** 2026-08-13
 **Synthesises:** docs 01–09
 **Status:** Architecture. No implementation. Library versions are pinned when build begins, not here.
+
+---
+
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
 
 ---
 
@@ -16,7 +25,7 @@ Before any technology choice, the five constraints that actually determine it:
       One person. Every choice must minimise total work, not
       maximise elegance. Boring beats clever. (07 §5)
 
-  C2  IT IS AN APPLIANCE
+  C2  IT IS AN COLLECTOR
       Ships as an image into a customer's data centre or VPC.
       We control the OS. It must install without customer expertise
       and run for months untouched. Remote hands are unaffordable.
@@ -29,7 +38,7 @@ Before any technology choice, the five constraints that actually determine it:
       Debugging happens locally, by the customer or via redacted
       bundles. Nobody emails us their logs. (03 §11.5, 09 §6.2)
 
-  C5  ONE APPLIANCE, ONE CUSTOMER
+  C5  ONE COLLECTOR, ONE CUSTOMER
       No multi-tenancy anywhere in the stack. Physical isolation.
       (09 §2)
 ```
@@ -47,7 +56,7 @@ Confirmed 2026-08-13. The reasoning, restated because it should be defensible la
 ```
   ✓ Single static binary. No runtime, no interpreter, no JVM, no
     dependency hell inside a customer's air-gapped data centre.
-    This is the single strongest argument for an appliance.
+    This is the single strongest argument for a collector.
   ✓ Cross-compiles to Linux/Windows/macOS from one machine —
     the agent needs all three.
   ✓ Concurrency model fits the workload exactly: hundreds of
@@ -63,6 +72,12 @@ Confirmed 2026-08-13. The reasoning, restated because it should be defensible la
 ```
 
 ### 2.2 Storage — Postgres, plus files
+
+> **Handoff alignment.** This section describes **collector-local** storage
+> only. The SaaS stack is fixed by the handoff: **PostgreSQL for state,
+> ClickHouse for analytics** (§3.2, §4). Our earlier rejection of
+> ClickHouse applied to putting a lake on the collector, and still does —
+> it does not apply to SaaS, where the handoff has decided.
 
 Confirmed 2026-08-13. But the important detail is **what does NOT go in Postgres.**
 
@@ -81,7 +96,7 @@ Confirmed 2026-08-13. But the important detail is **what does NOT go in Postgres
 
 Putting the journal or evidence store in Postgres would be a mistake: they are append-heavy, TTL-driven, and never queried relationally. Files with segment rotation are simpler, faster, and easier to reason about under crash.
 
-**Why Postgres and not a graph database** (01 §9.4): licensing, operational simplicity in an appliance, and one person's ability to debug it at 2am. Adjacency tables plus materialized transitive closure for the two dense predicates (`CAN_ASSUME`, `MEMBER_OF`) handles our scale. The graph access layer stays behind an interface so the engine can be replaced without touching the analytics above it.
+**Why Postgres and not a graph database** (01 §9.4): licensing, operational simplicity in a collector, and one person's ability to debug it at 2am. Adjacency tables plus materialized transitive closure for the two dense predicates (`CAN_ASSUME`, `MEMBER_OF`) handles our scale. The graph access layer stays behind an interface so the engine can be replaced without touching the analytics above it.
 
 ### 2.3 Libraries, by role
 
@@ -181,7 +196,7 @@ Named by role. Versions pinned at build start, not asserted here.
 ### 2.5 What we explicitly reject
 
 ```
-  ✗ Kubernetes as the appliance runtime
+  ✗ Kubernetes as the collector runtime
       Adds an operational dependency to every customer data centre.
       We ship a VM image, not a cluster.
   ✗ A message broker (Kafka, NATS, RabbitMQ)
@@ -207,7 +222,7 @@ Named by role. Versions pinned at build start, not asserted here.
       WHERE A BROKER WOULD BE RIGHT, and is not yet:
         · the customer already runs one → we CONSUME from it
           (connectors/09 §3). Different from operating our own.
-        · the XL profile, when R1/R2 span machines
+        · beyond Edge L, when R1/R2 span collectors (handoff §19.2)
         · MSSP console fact ingest at N customers (Mode 2)
 
       IF ONE IS EVER NEEDED: NATS JetStream — single Go binary,
@@ -317,7 +332,7 @@ Against the feasible options in `07 §5`.
   Output is synthesized edges plus a rationale.
 
   This is why Option C is the cheapest credible start: three engines,
-  no appliance, no persistence, no UI. And two of the three are
+  no collector, no persistence, no UI. And two of the three are
   required by every other option.
 ```
 
@@ -368,16 +383,33 @@ Against the feasible options in `07 §5`.
 
 ---
 
-## 5. The conclusion that changes v1
+## 5. Mode 1 — SUPERSEDED
+
+> **⚠ The handoff removes this option.** §4 and §20 assume SaaS is always
+> present: the collector uploads Security Facts, receives configuration,
+> and brokers response commands from the cloud. There is no standalone
+> mode in which the collector is the whole product.
+>
+> What survives: **the collector must keep working while SaaS is
+> unreachable** (handoff §19.1) — local processing continues, the spool
+> absorbs, replay follows. That is degraded operation, not a deployment
+> mode.
+>
+> The Fact Builder and the outbound path are therefore **always
+> required**, not Mode 2 additions. The section below is retained for the
+> reasoning about what each engine costs, and its conclusion no longer
+> applies.
+
+## 5. The conclusion that changes v1  — SUPERSEDED, see above
 
 Working through the engine list against `09`'s multi-instance decision surfaces something the earlier documents missed.
 
-**If every customer gets their own dedicated appliance, then for a single customer the appliance can be the entire product.**
+**If every customer gets their own dedicated collector, then for a single customer the collector can be the entire product.**
 
 ```
   MODE 1 — STANDALONE                    MODE 2 — CONNECTED
   ────────────────────────────           ──────────────────────────────
-  appliance holds the graph              appliance builds Security Facts
+  collector holds the graph              collector builds Security Facts
   Controller UI shows findings           facts flow to the MSSP console
   everything plaintext, on-site          console holds tokens only
   no SaaS at all                         cross-customer view, fleet plane
@@ -397,7 +429,7 @@ Working through the engine list against `09`'s multi-instance decision surfaces 
   Mode 1 first. It is a complete, sellable product for a single
   customer — which, under multi-instance, is every customer.
 
-  Mode 2 when there is a second Edge Node for one customer
+  Mode 2 when there is a second Edge Collector for one customer
   (the hybrid archetype, 09 §4 Archetype 3), or a second customer
   and a reason to see across them.
 ```
@@ -520,7 +552,7 @@ Four processes (`04 §26`), one binary, one mode flag.
   IPC  Unix domain sockets, length-prefixed protobuf or JSON.
        Local only, never network-exposed.
 
-  SUPERVISION  systemd units in the appliance image, with restart
+  SUPERVISION  systemd units in the collector image, with restart
                backoff and crash-loop quarantine.
 ```
 
@@ -541,7 +573,7 @@ The one place where schema shape is worth sketching, because it determines wheth
   edges
     from_token · to_token · predicate · properties JSONB
     weight · confidence · first_seen · last_seen · removed_at
-    evidence_ref · edge_node_id
+    evidence_ref · collector_id
     PK (from_token, to_token, predicate, attr_signature)
 
   closure_can_assume        materialized transitive closure
@@ -594,9 +626,11 @@ Path finding is a recursive CTE over `edges` seeded from crown jewels, reverse-B
     air-gapped: signed bundle uploaded through the Controller
 
   SIZING (01 §10.3)
-    S  8 vCPU / 32 GB / 500 GB     < 500 hosts
-    M  16 / 64 / 2 TB              < 5,000
-    L  32 / 128 / 8 TB             < 25,000
+    ⚠ SUPERSEDED by the handoff ceiling (01 §10.3):
+    Edge S   4 vCPU / 16 GB / 250 GB
+    Edge M   8 vCPU / 32 GB / 500 GB
+    Edge L  12 vCPU / 64 GB / 1 TB     ← the hard maximum
+    Beyond Edge L: ADD A COLLECTOR. There is no XL.
 ```
 
 ---
@@ -630,9 +664,9 @@ Path finding is a recursive CTE over `edges` seeded from crown jewels, reverse-B
 
 ```
   D1  Mode 1 first — confirmed? (§5)  This is the significant one.
-  D2  Ship Postgres inside the appliance image, or require the
+  D2  Ship Postgres inside the collector image, or require the
       customer to provide one? Recommend inside — C2 says the
-      appliance installs without customer expertise.
+      collector installs without customer expertise.
   D3  sqlc vs hand-written scanning. Recommend sqlc.
   D4  River for scheduling, or a hand-rolled scheduler on Postgres?
       River is less code; a hand-rolled one is fewer dependencies.

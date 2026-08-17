@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 Three engines documented together because they occupy the same slot in the derivation stage and are frequently — and wrongly — lumped together as "the analytics engine."
@@ -76,7 +85,7 @@ Rules are shipped content, versioned alongside escalation primitives. They diffe
     absence      a scheduled job did not run
 
   OUTPUT   FINDING or EVENT_SUMMARY observations.
-           Raw events NEVER leave the appliance.
+           Raw events NEVER leave the collector.
 ```
 
 **Why it is deferred.** Overlook's findings are structural, not temporal. "This permission creates a path" needs no time window. Correlation answers "is something happening?" — which is the question an XDR exists for, and which Meridian's CrowdStrike already answers better than we would. E10 earns its place only where a temporal signal materially changes a *structural* conclusion, such as detecting that a new admin grant appeared three hours after a suspicious authentication.
@@ -106,7 +115,7 @@ Rules are shipped content, versioned alongside escalation primitives. They diffe
 
 **Why it is deferred at Meridian.** They own Forcepoint DLP. Ingesting its classification results as an overlay gives us `DATA_CLASS` properties for free, without running our own crawl over 40 TB of file shares. Building E11 duplicates a control the customer already paid for.
 
-**Isolation is non-negotiable.** E11 runs in its own process with a hard resource ceiling and the lowest priority, and cannot borrow capacity. A classification crawl starving identity collection is the single most common way appliances like this fall over (`../04 §26`).
+**Isolation is non-negotiable.** E11 runs in its own process with a hard resource ceiling and the lowest priority, and cannot borrow capacity. A classification crawl starving identity collection is the single most common way collectors like this fall over (`../04 §26`).
 
 ---
 
@@ -137,7 +146,7 @@ Rules are shipped content, versioned alongside escalation primitives. They diffe
 | E9 | Rule content regression | Version-stamped findings are bulk-retractable, like primitives |
 | E10 | Window memory exhaustion | Declared cardinality bound + eviction; breach sheds the window and alarms |
 | E10 | Clock skew across sources | Sequence rules produce nonsense — requires source-time vs receive-time discipline |
-| E11 | Crawl starves the appliance | Isolated process, hard ceiling, cannot borrow capacity |
+| E11 | Crawl starves the collector | Isolated process, hard ceiling, cannot borrow capacity |
 | E11 | Scanning a source under load | Throttle by target-system load, not only by our own |
 | E11 | Sampling misses the sensitive data | Coverage reported as a percentage with confidence, never as a binary |
 
@@ -150,7 +159,7 @@ Rules are shipped content, versioned alongside escalation primitives. They diffe
        the entities it concerns; findings are bulk-retractable by
        rule version; suppressions survive rule updates
 
-  E10  raw events never leave the appliance; every window declares
+  E10  raw events never leave the collector; every window declares
        a cardinality bound and eviction policy
 
   E11  content is never retained; output is a label plus a bucketed
@@ -185,7 +194,7 @@ Rules are shipped content, versioned alongside escalation primitives. They diffe
 
 ```
   RULE SET  184 rules evaluated against current state
-  RUNTIME   38 seconds across both Edge Nodes
+  RUNTIME   38 seconds across both Edge Collectors
 
   FINDINGS RAISED                                            open
   ─────────────────────────────────────────────────────────  ────

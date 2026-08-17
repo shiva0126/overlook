@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 Three tightly coupled things at the front door.
@@ -171,7 +180,7 @@ Each stage has a bounded queue. Saturation propagates back to Receive, which she
 ## 8. Example: Meridian, one hour at the front door
 
 ```
-  09:00-10:00, EDGE-DC1
+  09:00-10:00, COL-DC1
 
   STREAM — the flood
     4 firewalls → syslog/TCP-TLS:6514
@@ -195,7 +204,7 @@ Each stage has a bounded queue. Saturation propagates back to Receive, which she
       → journaled + fsync, THEN acked
       → each agent prunes its local buffer only after our ack
 
-    At 09:14 the appliance is briefly under load. It returns a
+    At 09:14 the collector is briefly under load. It returns a
     slow-down hint. Agents extend their batch interval rather than
     dropping data. Nothing is lost.
 

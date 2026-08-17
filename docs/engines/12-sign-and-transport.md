@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 The last stage. Tokenized facts are made tamper-evident, made durable, batched, compressed and delivered to the MSSP console over a channel the customer's firewall team will approve without a security review.
@@ -21,7 +30,7 @@ It is plumbing rather than an engine — it makes no decisions about content —
           acknowledgements consumed, queue pruned
 
   ALSO    the command channel — the only way the console can ask
-          the appliance to do anything
+          the collector to do anything
 ```
 
 ---
@@ -36,13 +45,13 @@ It is plumbing rather than an engine — it makes no decisions about content —
   INSTEAD
     each fact carries its own SHA-256 content hash
     the batch carries a manifest of those hashes
-    the MANIFEST is signed, once, with the Edge Node's Ed25519 key
+    the MANIFEST is signed, once, with the Edge Collector's Ed25519 key
 
   → per-fact integrity verification, one signature per batch
   → the console can verify any individual fact against the manifest
 ```
 
-The signing key is generated on the appliance at enrollment, backed by TPM/HSM where available, and never leaves.
+The signing key is generated on the collector at enrollment, backed by TPM/HSM where available, and never leaves.
 
 ### 3.2 The outbound queue
 
@@ -62,10 +71,10 @@ The signing key is generated on the appliance at enrollment, backed by TPM/HSM w
 
 ```
   TLS 1.3, mutual authentication, port 443, OUTBOUND ONLY.
-  The appliance always initiates. The console NEVER connects in.
+  The collector always initiates. The console NEVER connects in.
 
   BATCH FORMAT
-    header  deployment_id, edge_node_id, batch_id, schema_version,
+    header  deployment_id, collector_id, batch_id, schema_version,
             fact_count, compression, sig_alg
     body    zstd(newline-delimited facts)
     footer  manifest signature, SHA-384 of the body
@@ -113,9 +122,9 @@ Since the console cannot connect inbound, control flows through a polled queue.
     CONTENT_UPDATE    parsers, primitives, rules, fingerprints
     RESPONSE_REQUEST  a response action for local validation
     DIAGNOSTIC        collect redacted diagnostics
-    UPGRADE           staged appliance upgrade
+    UPGRADE           staged collector upgrade
 
-  EVERY command is signed by the console with a key the appliance
+  EVERY command is signed by the console with a key the collector
   pinned at enrollment, carries a nonce and an expiry, and is
   validated locally before execution.
 
@@ -126,19 +135,19 @@ Since the console cannot connect inbound, control flows through a polled queue.
 ### 3.6 Enrollment
 
 ```
-  1  operator requests a new Edge Node in the console
+  1  operator requests a new Edge Collector in the console
      → one-time enrollment token, 24h TTL, single-use, bound to
        the deployment and a chosen node name
 
   2  operator runs the installer, pastes the token
 
-  3  appliance generates an Ed25519 keypair — private key generated
+  3  collector generates an Ed25519 keypair — private key generated
      in and never leaving the node
 
-  4  appliance presents the token + a CSR over TLS
+  4  collector presents the token + a CSR over TLS
 
   5  console validates, issues a client certificate bound to
-     (deployment_id, edge_node_id), 90-day lifetime
+     (deployment_id, collector_id), 90-day lifetime
 
   6  the deployment_key is obtained:
        FIRST node   generates locally, wraps with customer KMS
@@ -156,13 +165,13 @@ Step 6 is the one that must not be shortcut. It is the only step where a conveni
 
 ## 4. Considerations
 
-**Idempotency is the transport's contract with the console.** After a partition the appliance resends. Semantic identity plus upsert on the console side makes replay harmless; without it, every outage produces duplicate edges.
+**Idempotency is the transport's contract with the console.** After a partition the collector resends. Semantic identity plus upsert on the console side makes replay harmless; without it, every outage produces duplicate edges.
 
 **Rejected facts must not retry forever.** A schema-version mismatch or a validation failure on the console side is permanent until something changes. Quarantine, surface, stop — do not build an infinite retry loop that masks the problem.
 
-**Certificate expiry is a silent killer.** Ninety-day certs with auto-renewal at sixty days works until the appliance has been offline for thirty-one. Surface expiry countdown in the Controller and in the fleet plane.
+**Certificate expiry is a silent killer.** Ninety-day certs with auto-renewal at sixty days works until the collector has been offline for thirty-one. Surface expiry countdown in the Controller and in the fleet plane.
 
-**Clock skew breaks nonces and expiries.** Monitor drift explicitly; a command rejected for being "expired" because the appliance clock is wrong is a confusing failure.
+**Clock skew breaks nonces and expiries.** Monitor drift explicitly; a command rejected for being "expired" because the collector clock is wrong is a confusing failure.
 
 **Queue sizing should be expressed in days, not bytes.** "7 days of buffer" is meaningful to an operator; "40 GB" is not, because they do not know the fact rate.
 
@@ -189,7 +198,7 @@ Step 6 is the one that must not be shortcut. It is the only step where a conveni
 
 ```
   MUST GUARANTEE
-    the appliance always initiates; no inbound port is ever required
+    the collector always initiates; no inbound port is ever required
     facts are durable before delivery is attempted
     replay is idempotent
     every batch is signed and verifiable per fact
@@ -220,13 +229,13 @@ Step 6 is the one that must not be shortcut. It is the only step where a conveni
 ```
   BOTH EDGE NODES → MSSP CONSOLE
 
-  02:07  EDGE-CLD flushes the nightly batch
+  02:07  COL-CLD flushes the nightly batch
            1,842 facts · 7.1 MB after zstd
            manifest of 1,842 SHA-256 hashes, signed Ed25519
            mTLS 443 outbound, 3.2 seconds
            ACK: 1,842 accepted, 0 rejected
 
-  02:08  EDGE-DC1 flushes
+  02:08  COL-DC1 flushes
            1,072 facts · 4.7 MB
            ACK: 1,071 accepted, 1 REJECTED
              reason: schema_version overlook.fact.v1 field
@@ -248,7 +257,7 @@ Step 6 is the one that must not be shortcut. It is the only step where a conveni
 
 ```
   14:22  Meridian's egress proxy is reconfigured. The console
-         becomes unreachable from both Edge Nodes.
+         becomes unreachable from both Edge Collectors.
 
   14:22  queue begins growing. Controller shows:
 
@@ -286,7 +295,7 @@ Step 6 is the one that must not be shortcut. It is the only step where a conveni
            issued_by, approved_by, justification
          signs it, places it in the command queue
 
-  09:14  EDGE-DC1 long-poll returns the command.
+  09:14  COL-DC1 long-poll returns the command.
          Local validation:
            signature against the pinned console key    ✓
            nonce unused                                ✓
@@ -300,11 +309,11 @@ Step 6 is the one that must not be shortcut. It is the only step where a conveni
          → refusal logged in the local audit trail, and reported
            to the console so the analyst sees why.
 
-         Console shows: "Refused by the customer's Edge Node —
+         Console shows: "Refused by the customer's Edge Collector —
          response actions are disabled by local policy."
 
   The console issued a valid, signed, approved command.
-  The appliance said no. That is the design working exactly as
+  The collector said no. That is the design working exactly as
   intended: the customer's local policy beats the vendor's cloud,
   always.
 ```

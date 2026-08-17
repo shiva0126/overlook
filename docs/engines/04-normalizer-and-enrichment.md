@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 **E4, Normalizer**, maps vendor-specific fields onto the Overlook schema so that no downstream engine ever sees a vendor difference. After E4, an AWS IAM role, an LDAP group and an Okta app assignment are the same *kind* of thing described in the same vocabulary.
@@ -127,7 +136,7 @@ E5 reads the entity store. The entity store is populated by E6, which runs *afte
 
 | Failure | Behaviour |
 |---|---|
-| Ambiguous timezone | Policy per source: source-declared → appliance TZ → flag. Never silently assume UTC |
+| Ambiguous timezone | Policy per source: source-declared → collector TZ → flag. Never silently assume UTC |
 | Unmapped field | Retained in `extra`, counted, surfaced when the rate changes |
 | Unmapped enum value | Passed through flagged; monitored — indicates vendor drift |
 | Enrichment lookup miss | Proceed unenriched, flag it. **Never block** |
@@ -179,7 +188,7 @@ E5 reads the entity store. The entity store is populated by E6, which runs *afte
 Priya S appears in eight sources. Here is what E4 and E5 do to three of them, before E6 ever sees them.
 
 ```
-  SOURCE 1 — ACTIVE DIRECTORY  (LDAP, EDGE-DC1)
+  SOURCE 1 — ACTIVE DIRECTORY  (LDAP, COL-DC1)
 
   RAW
     distinguishedName: CN=Priya S,OU=Engineering,OU=Users,DC=corp,DC=meridian,DC=com
@@ -211,7 +220,7 @@ Priya S appears in eight sources. Here is what E4 and E5 do to three of them, be
     → flagged: "business context unavailable"
 
 
-  SOURCE 2 — AWS IAM  (EDGE-CLD)
+  SOURCE 2 — AWS IAM  (COL-CLD)
 
   RAW
     UserName: priya.s
@@ -235,7 +244,7 @@ Priya S appears in eight sources. Here is what E4 and E5 do to three of them, be
     → environment: production, criticality inherited
 
 
-  SOURCE 3 — THE AGENT ON LT-4471  (EDGE-DC1)
+  SOURCE 3 — THE AGENT ON LT-4471  (COL-DC1)
 
   RAW
     host: LT-4471

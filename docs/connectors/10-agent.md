@@ -8,6 +8,15 @@ Continuous, its own ingress class. The agent is not a connector in the usual sen
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## The scope rule that defines the agent
 
 ```
@@ -41,7 +50,7 @@ The agent is **thin, userland, read-mostly, no kernel driver**. That is what mak
   transport     agent-initiated mTLS, outbound only, NO listening port
   auth          enrollment token → client certificate
   buffering     local, bounded: 24h or 200 MB, whichever first
-  ack           appliance journals + fsync, then acks; agent prunes
+  ack           collector journals + fsync, then acks; agent prunes
   coverage      per-host, per-collector; a host that did not report
                 is STALE, never retracted
   resource caps CPU < 1% avg / < 5% peak · RAM < 150 MB
@@ -170,7 +179,7 @@ A team that wrote their own agent with LangChain, or stood up a local Chroma ind
   Controller.
 
   When installed, every command requires:
-    signature from the appliance, validated against a pinned key
+    signature from the collector, validated against a pinned key
     unused nonce
     unexpired TTL
     pre-flight verification that the target still matches
@@ -178,7 +187,7 @@ A team that wrote their own agent with LangChain, or stood up a local Chroma ind
     the target not being on the protected-asset list
 
   And the agent's OWN timer releases any containment on TTL expiry,
-  even if the appliance is unreachable — a quarantine that survives
+  even if the collector is unreachable — a quarantine that survives
   a management-plane outage is an outage of the customer's business.
 ```
 

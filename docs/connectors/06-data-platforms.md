@@ -2,11 +2,20 @@
 
 **18 connectors · 99 collectors** · [Index](00-index.md)
 
-Band 4, isolated resource pool. These connectors must never starve identity or cloud collection — a classification crawl over 40 TB of file shares is the single most common way an appliance like this falls over (`../04 §26`).
+Band 4, isolated resource pool. These connectors must never starve identity or cloud collection — a classification crawl over 40 TB of file shares is the single most common way a collector like this falls over (`../04 §26`).
 
 ⚠ **The distinction that matters in this domain:** the cloud connector sees the *resource* — that an RDS instance exists, is public, and is encrypted. This domain sees *inside* it — schemas, database-local users, grants, and what data is actually there. They are different connectors with different credentials answering different questions, and both are needed.
 
 ⚠ **Every database has its own IAM that nobody models.** A cloud role granting `rds:DescribeDBInstances` says nothing about who can `SELECT` from the payments table. Database-internal grants are a permission system as real as cloud IAM, and this domain is the only place they appear.
+
+---
+
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
 
 ---
 

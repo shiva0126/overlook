@@ -1,8 +1,30 @@
 # Overlook — Complete System Design
 
-**Version:** 0.1 (design draft)
-**Date:** 2026-08-12
-**Status:** For brainstorming. Nothing here is implemented.
+**Version:** 0.2
+**Date:** 2026-08-17
+**Status:** Aligned to the Engineering Handoff. Nothing here is implemented.
+
+---
+
+> ## ⚠ AUTHORITY
+>
+> **`Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over every document in this set.**
+>
+> This document and its companions are design exploration. Where they
+> disagree with the handoff, the handoff wins. Where they extend it, the
+> extension is marked **PROPOSED EXTENSION** and requires review under
+> handoff §25.3 / §35.1 before it is built.
+>
+> **What the handoff fixes:**
+> - the component is the **Edge Collector**, not an "Edge Node" or appliance
+> - hard ceiling **12 vCPU / 64 GB / 1 TB**, scale out not up (§10.3)
+> - **Security Fact v1** is the edge↔SaaS contract (§5)
+> - scope boundary: collector = ingest→fact; **PostgreSQL, ClickHouse,
+>   TrustGraph, correlation, risk and attack paths are SaaS** (§3.1)
+> - phased build with stop/go gates (§38)
+>
+> **Open escalations raised by this alignment** are listed in §41.
 
 ---
 
@@ -16,7 +38,7 @@ It is organised in seven parts:
 |---|---|---|
 | I — Foundations | 1–4 | The mental model. What Overlook is, what problem it solves, the three planes. |
 | II — The Spine | 5–9 | The data contracts everything else depends on: Security Facts, entities, tokenization, entity resolution, the TrustGraph. |
-| III — Components | 10–18 | Internal architecture of the Edge Node, Agent, AI Gateway, and SaaS. |
+| III — Components | 10–18 | Internal architecture of the Edge Collector, Agent, AI Gateway, and SaaS. |
 | IV — Intelligence | 19–23 | Correlation, attack paths, risk, change, blast radius. |
 | V — AI Security | 24–29 | How the AI-specific capabilities actually work. |
 | VI — Action | 30–31 | Response and Break Attack Path. |
@@ -299,7 +321,7 @@ Overlook decomposes into three planes with different trust levels, different fai
                               |  Security Facts (tokenized, signed)
                               |
 +---------------------------------------------------------------+
-|  COLLECTION PLANE  (Edge Node, Agent, AI Gateway)              |
+|  COLLECTION PLANE  (Edge Collector, Agent, AI Gateway)              |
 |  Ingestion, parsing, normalization, resolution, local analysis |
 |  Trust: highest. Sees everything in the clear.                 |
 |  Scale: billions of events/day per large customer.             |
@@ -357,13 +379,13 @@ Precise terms, used consistently for the rest of the document.
 | **Observation** | A single sighting of an entity or relationship from one source at one time. Raw material. |
 | **Security Fact** | The unit of information that crosses from Edge to SaaS. A tokenized, signed, evidence-referenced assertion about entities or relationships. See Chapter 5. |
 | **Edge (graph)** | A relationship between two nodes: `CAN_ASSUME`, `CAN_READ`, `CONNECTS_TO`. |
-| **Edge Node** | The customer-side appliance. Unfortunate collision with "edge (graph)" — context disambiguates; this document says "Edge Node" for the appliance. |
+| **Edge Collector** | The customer-side collector. Unfortunate collision with "edge (graph)" — context disambiguates; this document says "Edge Collector" for the collector. |
 | **TrustGraph** | The unified graph in SaaS. Nodes + edges + properties + time. |
 | **Attack Path** | An ordered sequence of graph edges from a starting condition to a crown jewel. |
 | **Crown Jewel** | An asset the customer designates as business-critical. Paths are scored by which crown jewels they reach. |
 | **Blast Radius** | Everything reachable *from* a compromised node. The inverse of an attack path. |
 | **Choke Point** | An edge appearing in many distinct paths. Removing it breaks all of them. The basis of Break Attack Path. |
-| **Privacy Gate** | The Edge Node component that decides what may leave and strips/tokenizes everything else. |
+| **Privacy Gate** | The Edge Collector component that decides what may leave and strips/tokenizes everything else. |
 | **Token** | A deterministic, tenant-scoped pseudonym for a sensitive value. See Chapter 7. |
 | **Evidence Reference** | A hash pointing at raw evidence retained *at the Edge*, fetchable on demand by an authorised analyst. |
 
@@ -390,23 +412,34 @@ The Security Fact is the **only** thing that crosses from customer environment t
 
 ### 5.2 Anatomy
 
+**Base schema is Security Fact v1 as defined in the Engineering Handoff §9.** The mandatory fields are `schema_version`, `tenant_id`, `collector_id`, `event_id`, `timestamp`, `received_at`, `action`, `source.type`, at least one meaningful entity, and `confidence` where derived.
+
 ```jsonc
 {
-  // --- identity of this fact ---
-  "fact_id":      "01JC8Q2K7M4N5P6R7S8T9V0W1X",   // ULID, sortable by time
-  "schema":       "overlook.fact.v1",
-  "fact_type":    "RELATIONSHIP",                  // ENTITY | RELATIONSHIP | PROPERTY | FINDING | EVENT_SUMMARY
-  "edge_node_id": "EDGE-ap-south-1-a",
-  // NOTE: no tenant_id. One appliance serves one customer (09 §2), and
-  // the mTLS client certificate on the sync channel establishes which
-  // deployment a batch came from. Carrying it on every fact would be
-  // redundant bytes and an invitation to build tenant-aware query paths
-  // we have deliberately designed out.
+  // --- HANDOFF §9 MANDATORY ---
+  "schema_version": "1.0",
+  "tenant_id":      "TENANT-001",   // REINSTATED per handoff §9.1.
+                                    // Earlier drafts removed it on the
+                                    // grounds that one collector serves
+                                    // one customer. The handoff makes it
+                                    // mandatory, and it costs little.
+  "collector_id":   "COL-001",
+  "event_id":       "01JC8Q2K7M4N5P6R7S8T9V0W1X",  // unique
+  "timestamp":      "2026-08-17T06:30:00Z",        // normalized UTC
+  "received_at":    "2026-08-17T06:30:01Z",
 
-  // --- what is being asserted ---
-  "subject":   { "type": "IDENTITY", "token": "IDN-9f3a7c21e845b0d6" },
-  "predicate": "CAN_ASSUME",
-  "object":    { "type": "ROLE",     "token": "ROL-2b8e4f19a70c5d33" },
+  "subject":   { "type": "user", "id": "...", "name": "..." },
+  "action":    "can_assume",
+  "object":    { "type": "role", "id": "...", "name": "..." },
+  "source":    { "type": "connector", "vendor": "aws", "source_id": "..." },
+  "confidence": 0.97,
+
+  // --- PROPOSED EXTENSIONS (handoff §35.1 review required) ---
+  // Everything below is additive. The handoff schema validates without
+  // it; our graph semantics do not work without it. Each is justified
+  // in §41.
+  "fact_type":  "RELATIONSHIP",   // ENTITY | RELATIONSHIP | PROPERTY |
+                                  // FINDING | EVENT_SUMMARY
 
   // --- qualifiers that make the assertion useful ---
   "attributes": {
@@ -432,7 +465,7 @@ The Security Fact is the **only** thing that crosses from customer environment t
   "evidence": {
     "ref":        "sha256:8a1f...c4d2",
     "kind":       "iam_policy_document",
-    "location":   "edge://EDGE-ap-south-1-a/evidence/2026/08/12/8a1f...c4d2",
+    "location":   "edge://COL-ap-south-1-a/evidence/2026/08/12/8a1f...c4d2",
     "retention_expires": "2026-11-10T00:00:00Z"
   },
 
@@ -472,7 +505,7 @@ Note `record_count_bucket`, not `record_count`. Exact counts can be identifying 
    [ Privacy Gate ]  -- tokenize, bucket, strip, validate against schema
             |
             v
-   [ Signer ]        -- Ed25519, Edge Node key
+   [ Signer ]        -- Ed25519, Edge Collector key
             |
             v
    [ Outbound Queue ] -- durable, ordered, compressed batches
@@ -495,7 +528,7 @@ Note `record_count_bucket`, not `record_count`. Exact counts can be identifying 
 Facts must be **idempotent on replay**. After a network partition the Edge will resend; after an Edge restart it may rebuild from local state. The rule:
 
 - `fact_id` is a ULID, unique per emission — used for transport-level dedup only.
-- The **semantic identity** of a fact is `hash(fact_type, subject.token, predicate, object.token, canonical(attributes))`. No tenant component: the appliance serves one customer, and on the SaaS side each customer's graph is a separate store, so there is no namespace to disambiguate.
+- The **semantic identity** of a fact is `hash(fact_type, subject.token, predicate, object.token, canonical(attributes))`. No tenant component: the collector serves one customer, and on the SaaS side each customer's graph is a separate store, so there is no namespace to disambiguate.
 - SaaS upserts on semantic identity, taking `max(last_seen)`, `min(first_seen)`, `sum(observation_count)` where sensible, and the highest-confidence source.
 
 Getting this wrong produces duplicate edges, which inflate path counts and destroy trust in the numbers. Design it in from the first line of code.
@@ -615,7 +648,7 @@ A control does not create reachability; it reduces the probability of a path suc
 Three things must be true simultaneously, and they are in tension:
 
 1. SaaS must never receive identifying values.
-2. The **same entity** observed by **different Edge Nodes** must produce the **same token** — otherwise a customer with 5 Edge Nodes gets 5 disconnected graph fragments and cross-domain correlation, the entire product, fails.
+2. The **same entity** observed by **different Edge Collectors** must produce the **same token** — otherwise a customer with 5 Edge Collectors gets 5 disconnected graph fragments and cross-domain correlation, the entire product, fails.
 3. An authorised analyst must be able to see the real name in the UI.
 
 A random token satisfies (1) and fails (2) and (3). A reversible encryption with a vendor-held key satisfies (2) and (3) and fails (1) — and fails it in the way that matters, since the vendor can decrypt.
@@ -635,7 +668,7 @@ e.g.  canonical_key = "email:priya.s@corp.com"
 
 Properties this gives us:
 
-- **Deterministic** — every Edge Node with the tenant key produces the same token for the same entity. Fragments merge automatically. Requirement (2) satisfied.
+- **Deterministic** — every Edge Collector with the tenant key produces the same token for the same entity. Fragments merge automatically. Requirement (2) satisfied.
 - **Irreversible without the key** — SaaS cannot compute `canonical_key` from the token. Requirement (1) satisfied.
 - **Not brute-forceable** — this is the subtle part. The keyspace of email addresses is small; without the tenant key, brute force is infeasible, but *if the key ever leaked*, an attacker could dictionary-attack every token. Hence: the key never leaves the customer environment, and each tenant's key is independent, so a compromise is contained to one customer.
 - **Rotatable** — with pain. Rotation re-tokenizes the whole graph. Design a dual-token transition window (Edge emits both old and new token for one sync cycle, SaaS merges) rather than pretending rotation never happens.
@@ -653,16 +686,16 @@ Properties this gives us:
         |         v
         |    Stored in customer's KMS. Overlook has no access.
         |
-        +--> Distributed to additional Edge Nodes via customer-controlled
+        +--> Distributed to additional Edge Collectors via customer-controlled
              enrollment (operator pastes a one-time bootstrap token, or
-             Edge Nodes fetch from shared KMS with their own IAM identity)
+             Edge Collectors fetch from shared KMS with their own IAM identity)
         |
         v
   Overlook SaaS receives:  nothing.
                            It sees only the deployment_id and the tokens.
 ```
 
-The customer can, at any time, verify this claim by inspecting the Edge Node's outbound queue through the local UI. **Build that inspection UI early** — it converts the privacy claim from a promise into a demonstrable fact, which is worth more in a procurement review than any whitepaper.
+The customer can, at any time, verify this claim by inspecting the Edge Collector's outbound queue through the local UI. **Build that inspection UI early** — it converts the privacy claim from a promise into a demonstrable fact, which is worth more in a procurement review than any whitepaper.
 
 ### 7.4 De-tokenization: how the analyst sees real names
 
@@ -678,7 +711,7 @@ This is the gap in the original brief and the detail most likely to be discovere
         |
         | 2. Browser extracts the list of tokens on screen (~40 tokens)
         |
-        | 3. Browser calls the CUSTOMER'S Edge Node directly:
+        | 3. Browser calls the CUSTOMER'S Edge Collector directly:
         |       POST https://overlook-edge.corp.local/api/v1/resolve
         |       Authorization: <SaaS-issued, short-lived, user-scoped JWT>
         |       Body: { tokens: ["IDN-9f3a...", "ROL-2b8e...", ...] }
@@ -696,8 +729,8 @@ This is the gap in the original brief and the detail most likely to be discovere
 
 **Consequences you must accept:**
 
-- The Edge Node is now a **production, low-latency, always-available service** with an SLA — not a batch collector. Chapter 10 sizes it accordingly.
-- The analyst's browser must reach the Edge Node. Fine on corporate network/VPN; a problem for a SOC analyst at home. Mitigations: an Edge Node in a DMZ with mTLS client certs, or a customer-hosted reverse proxy, or a customer-operated relay. **Do not** solve this by relaying through Overlook SaaS — that would put plaintext names on our servers and destroy the entire premise.
+- The Edge Collector is now a **production, low-latency, always-available service** with an SLA — not a batch collector. Chapter 10 sizes it accordingly.
+- The analyst's browser must reach the Edge Collector. Fine on corporate network/VPN; a problem for a SOC analyst at home. Mitigations: an Edge Collector in a DMZ with mTLS client certs, or a customer-hosted reverse proxy, or a customer-operated relay. **Do not** solve this by relaying through Overlook SaaS — that would put plaintext names on our servers and destroy the entire premise.
 - A **degraded mode** must exist: if the Edge is unreachable, the UI shows tokens with type icons and any non-identifying attributes (`IDENTITY · service account · Finance · admin privilege`). Surprisingly usable for triage; useless for action. Make the degraded state visually obvious.
 - The mapping table at the Edge is the crown jewel of the deployment. Encrypted at rest, access-audited, and every resolve call logged with the requesting user, tokens requested, and timestamp — which, pleasantly, is also the customer's proof of who looked at what.
 
@@ -759,19 +792,19 @@ Conversely, **negative evidence** blocks merges: two identities observed authent
 
 ### 8.3 Where resolution runs — and the multi-Edge trap
 
-Resolution runs at the **Edge Node**, before tokenization. It cannot run in SaaS: SaaS only has tokens, and tokens of two unmerged identities are two different tokens. There is no way to discover from `IDN-9f3a…` and `IDN-4b2e…` that they are one person.
+Resolution runs at the **Edge Collector**, before tokenization. It cannot run in SaaS: SaaS only has tokens, and tokens of two unmerged identities are two different tokens. There is no way to discover from `IDN-9f3a…` and `IDN-4b2e…` that they are one person.
 
 This creates a hard requirement:
 
-> **All Edge Nodes in a tenant must resolve to the same canonical key for the same entity, or the graph fragments.**
+> **All Edge Collectors in a tenant must resolve to the same canonical key for the same entity, or the graph fragments.**
 
 Three mechanisms, all needed:
 
 1. **Shared tenant key** — makes tokens identical *given* identical canonical keys.
-2. **Canonical key priority rules are global** — shipped as tenant configuration, identical on every Edge Node, versioned. If Edge A prefers email and Edge B prefers SAM name for the same identity, they produce different tokens for the same person.
-3. **A Resolution Directory** — a tenant-wide, customer-hosted mapping of `alternate_identifier -> canonical_key`, replicated between Edge Nodes. When Edge B sees `CORP\priyas` and has no local Okta connector, it consults the directory and learns the canonical key is `email:priya.s@corp.com`.
+2. **Canonical key priority rules are global** — shipped as tenant configuration, identical on every Edge Collector, versioned. If Edge A prefers email and Edge B prefers SAM name for the same identity, they produce different tokens for the same person.
+3. **A Resolution Directory** — a tenant-wide, customer-hosted mapping of `alternate_identifier -> canonical_key`, replicated between Edge Collectors. When Edge B sees `CORP\priyas` and has no local Okta connector, it consults the directory and learns the canonical key is `email:priya.s@corp.com`.
 
-The Resolution Directory is a piece of infrastructure the original brief does not mention and which is **mandatory** for any multi-Edge deployment. Options for hosting it: elect a primary Edge Node; or a small dedicated customer-hosted service; or replicate via the customer's own datastore. Simplest workable v1: **designate one Edge Node as the resolution primary**, others query it, with a cached fallback if unreachable.
+The Resolution Directory is a piece of infrastructure the original brief does not mention and which is **mandatory** for any multi-Edge deployment. Options for hosting it: elect a primary Edge Collector; or a small dedicated customer-hosted service; or replicate via the customer's own datastore. Simplest workable v1: **designate one Edge Collector as the resolution primary**, others query it, with a cached fallback if unreachable.
 
 ### 8.4 TRACE 1 — a person, from five sources to one node
 
@@ -877,7 +910,7 @@ EDGE
   removed_at      null
   confidence      0.97
   evidence_ref    sha256:8a1f...c4d2
-  edge_node_id    EDGE-ap-south-1-a
+  collector_id    COL-ap-south-1-a
 ```
 
 ### 9.2 Bitemporality — and why it is not optional
@@ -949,7 +982,7 @@ Three viable approaches, with an honest assessment:
 
 ### 10.1 The honest framing
 
-The original brief lists 28 responsibilities for the Edge Node. Read as a single process, that is unbuildable. Read correctly, it is a **distributed system that ships as one appliance image and can be split across machines as load demands**.
+The original brief lists 28 responsibilities for the Edge Collector. Read as a single process, that is unbuildable. Read correctly, it is a **distributed system that ships as one collector image and can be split across machines as load demands**.
 
 Design it as roles from day one. Ship it as one image for small customers, where all roles run co-resident. Let large customers scale roles independently. If you build a monolith first, the first 50,000-host customer forces a rewrite.
 
@@ -1004,30 +1037,97 @@ Design it as roles from day one. Ship it as one image for small customers, where
 
 - R1 fails → data loss (unbuffered UDP syslog is gone forever). Needs redundancy and generous buffers.
 - R2 fails → backlog grows; recoverable. Needs horizontal scale.
-- R3 fails → posture data goes stale; recoverable and low urgency. Needs isolation so a runaway DSPM scan cannot starve R1/R2 — this is the single most common way these appliances fall over.
+- R3 fails → posture data goes stale; recoverable and low urgency. Needs isolation so a runaway DSPM scan cannot starve R1/R2 — this is the single most common way these collectors fall over.
 - R4 fails → everything fails. Needs the most operational care, backup, and integrity checking.
 - R5 fails → analysts can't de-tokenize and response stops. Needs high availability, and it is the only role that must answer in milliseconds.
 
-### 10.3 Sizing
+### 10.3 Sizing and the hard resource ceiling
 
-Reference profiles. These are planning numbers to be validated by load testing, not measurements.
-
-| Profile | Hosts | Events/day | vCPU | RAM | Disk | Layout |
-|---|---|---|---|---|---|---|
-| S | < 500 | < 50M | 8 | 32 GB | 500 GB | All roles, one VM |
-| M | < 5,000 | < 500M | 16 | 64 GB | 2 TB | All roles, one VM |
-| L | < 25,000 | < 3B | 32 | 128 GB | 8 TB | R3 split to own VM |
-| XL | 25,000+ | 3B+ | cluster | — | — | R1/R2 scaled horizontally, R4 on dedicated storage |
-
-Disk is dominated by the local analytics dataset and the evidence store — the two things that exist precisely so data does *not* leave. Retention is therefore a customer-tunable knob with a direct cost:
+**Normative, per the Engineering Handoff v1.1 §5.**
 
 ```
-   evidence retention 30d   ->  ~1 TB at profile M
-   evidence retention 90d   ->  ~3 TB at profile M
-   evidence retention 365d  ->  ~12 TB at profile M
+  ┌──────────────────────────────────────────────────────────────┐
+  │  HARD CEILING                                                │
+  │                                                              │
+  │  No single Overlook Edge Collector may exceed                │
+  │       12 vCPU · 64 GB RAM · 1 TB local SSD/NVMe              │
+  │                                                              │
+  │  If capacity is exceeded: SCALE OUT, NOT UP.                 │
+  │  Add another collector. Never build a larger one.            │
+  └──────────────────────────────────────────────────────────────┘
 ```
 
-Default 90 days. Make the disk-cost consequence visible in the UI when the operator moves the slider.
+| Edition | vCPU | RAM | Local SSD/NVMe | Target use |
+|---|---|---|---|---|
+| **Edge S** | 4 | 16 GB | 250 GB | Branch, small environment, cloud-connector-only |
+| **Edge M** | 8 | 32 GB | 500 GB | Standard enterprise |
+| **Edge L** | 12 | 64 GB | 1 TB | Large enterprise, high volume — **the maximum** |
+
+There is no XL. A workload that exceeds Edge L is a workload for two collectors.
+
+#### Disk allocation at Edge L (handoff §5.2)
+
+| Purpose | Indicative allocation |
+|---|---|
+| OS + collector binaries | 50 GB |
+| Parsers / connector packages | 20 GB |
+| Local entity/state cache | 50–100 GB |
+| Collector operational logs | 20–30 GB |
+| Encrypted spool / replay buffer | 600–700 GB |
+| Reserved headroom | 100–200 GB |
+
+#### What the 1 TB ceiling forces
+
+Earlier drafts of this document budgeted an evidence store at ~3 TB for 90 days and a 30-day local analytics dataset. **Neither fits.** The ceiling is a design constraint, not a target, and it re-prioritises local storage as follows:
+
+```
+   SPOOL IS THE PRIORITY
+     600-700 GB, because outage survival is the collector's job
+
+   EVIDENCE RETENTION
+     default drops 90d → 14d, and evidence is stored as a HASH plus
+     a bounded excerpt rather than the full artifact
+     → an evidence reference older than the window resolves to
+       "expired", not to a broken link
+
+   LOCAL ANALYTICS DATASET (Parquet/DuckDB, 04 §28.1)
+     ESCALATE. It does not fit inside the ceiling alongside the
+     spool. Options: (a) drop it, (b) shrink to 7 days, (c) an
+     optional add-on volume outside the ceiling.
+     → handoff §25.3 and §35.1 require review for any new local
+       retention requirement.
+
+   ENTITY CACHE
+     bounded with TTL eviction, 50-100 GB, per handoff §10.1 —
+     NOT an unbounded local graph
+```
+
+#### Hard guardrails (handoff §5.1)
+
+```
+  · no process may assume unbounded memory growth
+  · every queue has an explicit maximum size and overflow policy
+  · local storage is a BUFFER/SPOOL, not a retention database
+  · high-water and critical-water thresholds stop uncontrolled
+    ingestion before disk exhaustion
+  · CPU-intensive enrichment is optional or rate-limited
+  · connector concurrency is configurable per source
+```
+
+### 10.3.1 Throughput targets
+
+**Normative, per handoff §18.** These are engineering targets to benchmark, not published claims.
+
+| Processing mode | Target |
+|---|---|
+| Raw forward only | 25K+ EPS |
+| Parse + normalize | ~20K EPS |
+| Parse + normalize + deduplicate | ~15–20K EPS |
+| Full Edge processing | ~10–15K sustained EPS |
+| **First acceptance baseline** | **5K sustained EPS** |
+| Burst handling | ~20–30K EPS with bounded buffering |
+
+Capacity must be measured in **both EPS and MB/s** — event size and parser complexity change collector load materially, so EPS alone is insufficient.
 
 ### 10.4 The processing pipeline in detail
 
@@ -1087,7 +1187,7 @@ Priority classes, highest first: agent telemetry and AI Gateway facts → cloud 
 
 ### 10.5 The credential vault
 
-The Edge Node holds credentials for every connector — often 40+ sets of cloud keys, service accounts, and API tokens. **The Edge Node is therefore one of the most valuable targets in the customer's network.** Treat it accordingly:
+The Edge Collector holds credentials for every connector — often 40+ sets of cloud keys, service accounts, and API tokens. **The Edge Collector is therefore one of the most valuable targets in the customer's network.** Treat it accordingly:
 
 - Credentials encrypted at rest with a key from the customer's KMS/HSM; never stored in configuration files or environment variables.
 - The vault process is separate from the connector processes; connectors request a *scoped, time-bounded* credential handle rather than holding the secret.
@@ -1122,7 +1222,7 @@ Splitting read from response is essential: it lets a customer deploy Overlook wi
    the state store's lease. Failover target: < 90 seconds.
 ```
 
-For most customers a single Edge Node with good buffering is sufficient — the failure mode is delayed insight, not lost security. Offer HA for those who need it; do not make it mandatory complexity.
+For most customers a single Edge Collector with good buffering is sufficient — the failure mode is delayed insight, not lost security. Offer HA for those who need it; do not make it mandatory complexity.
 
 ---
 
@@ -1281,7 +1381,7 @@ That is a **thin, read-mostly, userland agent**. No kernel driver. No hooks. It 
 +-------------------------------------------------------+
 ```
 
-**Agent-initiated, outbound-only.** The agent has no listening port. It polls the Edge Node for pending commands on its heartbeat. This removes an entire class of vulnerability (a remotely exploitable agent listener has ended companies) and makes firewall approval trivial.
+**Agent-initiated, outbound-only.** The agent has no listening port. It polls the Edge Collector for pending commands on its heartbeat. This removes an entire class of vulnerability (a remotely exploitable agent listener has ended companies) and makes firewall approval trivial.
 
 ### 12.3 Resource discipline
 
@@ -1466,7 +1566,7 @@ Ship A and D first. They cover the traffic that produces the differentiated find
 
 **Decision taken 2026-08-13 — see `09-deployment-and-tenancy-model.md`.**
 
-Overlook operates as an MSSP, but **each customer receives a dedicated, single-tenant deployment** on their own premises or in their own cloud. One appliance serves one customer, always.
+Overlook operates as an MSSP, but **each customer receives a dedicated, single-tenant deployment** on their own premises or in their own cloud. One collector serves one customer, always.
 
 ```
    NOT THIS                          THIS
@@ -1478,7 +1578,7 @@ Overlook operates as an MSSP, but **each customer receives a dedicated, single-t
 
 What this removes from the architecture:
 
-- No per-tenant schema separation inside an appliance — there is nothing to separate.
+- No per-tenant schema separation inside a collector — there is nothing to separate.
 - No tenant-aware query paths, RBAC, or resource governance in the pipeline.
 - No noisy-neighbour class of problem.
 - **No cross-customer breach class of vulnerability at all.**
@@ -1486,8 +1586,8 @@ What this removes from the architecture:
 What it adds — and what must be built instead:
 
 - **The MSSP console.** One SaaS console across all customer deployments, holding **tokens only**. Cross-customer health, coverage, finding counts and structural comparison are all computable on tokens, because the analysis is structural rather than content-based.
-- **Per-customer de-tokenization.** An MSSP analyst sees plaintext for a customer only if they can reach *that customer's* Edge Node and that customer's local RBAC permits it. The customer controls what their own service provider can see. A compromise of the MSSP console exposes token graphs and nothing else.
-- **A fleet plane** for provisioning, monitoring, updating and diagnosing N appliances — with the hard constraint that remote diagnostics must work without receiving customer data.
+- **Per-customer de-tokenization.** An MSSP analyst sees plaintext for a customer only if they can reach *that customer's* Edge Collector and that customer's local RBAC permits it. The customer controls what their own service provider can see. A compromise of the MSSP console exposes token graphs and nothing else.
+- **A fleet plane** for provisioning, monitoring, updating and diagnosing N collectors — with the hard constraint that remote diagnostics must work without receiving customer data.
 
 **Region residency** still applies to the token graph: the SaaS control plane should be deployable per region (EU, India, US, Gulf), because some regulators care where derived data sits even when it holds no plaintext.
 
@@ -1497,10 +1597,10 @@ Deployment is shaped by each customer's infrastructure — five archetypes, from
 
 A fair question: if everything is analysed at the Edge, why have SaaS at all? Four reasons, and they should be stated to customers plainly:
 
-1. **Cross-Edge correlation.** The hybrid attack path crossing on-prem AD → GitHub Cloud → AWS → back to an on-prem Oracle DB spans three Edge Nodes. Only SaaS sees all of it.
+1. **Cross-Edge correlation.** The hybrid attack path crossing on-prem AD → GitHub Cloud → AWS → back to an on-prem Oracle DB spans three Edge Collectors. Only SaaS sees all of it.
 2. **Cross-tenant intelligence.** "This MCP server version has a known tool-poisoning issue"; "this attack path shape is exploited in the wild"; "your peers remediate this class in 6 days, you take 40." Aggregate only, never per-customer.
 3. **Content delivery.** Parsers, detection rules, AI application fingerprints, MCP server reputation, model inventory. This is a continuously-updated product, and it needs a distribution channel.
-4. **Operational scale.** Attack-path computation over 120M edges is not something you want running on an appliance in a customer's data centre competing with ingestion.
+4. **Operational scale.** Attack-path computation over 120M edges is not something you want running on a collector in a customer's data centre competing with ingestion.
 
 ---
 
@@ -1508,24 +1608,24 @@ A fair question: if everything is analysed at the Edge, why have SaaS at all? Fo
 
 ### 15.1 Enrollment
 
-The bootstrap problem: how does a fresh Edge Node prove it belongs to a tenant, and how does it get a certificate?
+The bootstrap problem: how does a fresh Edge Collector prove it belongs to a tenant, and how does it get a certificate?
 
 ```
- 1. Customer admin, in the Overlook SaaS console, clicks "Add Edge Node".
+ 1. Customer admin, in the Overlook SaaS console, clicks "Add Edge Collector".
     -> SaaS generates a one-time enrollment token (24h TTL, single-use,
        bound to tenant + a chosen node name).
 
  2. Admin runs the installer, pastes the token.
 
- 3. Edge Node generates an Ed25519 keypair. The private key is
+ 3. Edge Collector generates an Ed25519 keypair. The private key is
     generated in and never leaves the node (TPM/HSM-backed where available).
 
- 4. Edge Node presents the enrollment token + a CSR to SaaS over TLS.
+ 4. Edge Collector presents the enrollment token + a CSR to SaaS over TLS.
 
  5. SaaS validates the token, issues a client certificate bound to
-    (deployment_id, edge_node_id), 90-day lifetime.
+    (deployment_id, collector_id), 90-day lifetime.
 
- 6. Edge Node derives or receives the tenant tokenization key:
+ 6. Edge Collector derives or receives the tenant tokenization key:
       - FIRST node in a tenant: generates it locally, wraps with customer KMS.
       - SUBSEQUENT nodes: obtain it from the customer's KMS using their own
         cloud identity, OR via an operator-mediated transfer.
@@ -1540,12 +1640,12 @@ Step 6 is the one to get right. It is the only step where a shortcut would let O
 ### 15.2 Transport
 
 ```
-   Edge Node ------------ TLS 1.3, mutual auth ------------> Overlook SaaS
+   Edge Collector ------------ TLS 1.3, mutual auth ------------> Overlook SaaS
                           port 443, outbound only
                           Edge always initiates
 
    Batch format:
-     header:  deployment_id, edge_node_id, batch_id, schema_version,
+     header:  deployment_id, collector_id, batch_id, schema_version,
               fact_count, compression=zstd, sig_alg=ed25519
      body:    zstd(newline-delimited signed facts)
      footer:  batch signature, sha384 of body
@@ -1560,7 +1660,7 @@ Step 6 is the one to get right. It is the only step where a shortcut would let O
      surfaced in local UI. They are NOT retried blindly forever.
 ```
 
-**Outbound-only, Edge-initiated.** SaaS never connects to the Edge Node. No inbound firewall rule is ever required. This matters enormously in procurement — "you do not need to open a port for us" removes a security-architecture review that can take months.
+**Outbound-only, Edge-initiated.** SaaS never connects to the Edge Collector. No inbound firewall rule is ever required. This matters enormously in procurement — "you do not need to open a port for us" removes a security-architecture review that can take months.
 
 The consequence: SaaS cannot push. Commands and configuration wait in a queue that the Edge polls (§15.4).
 
@@ -1649,7 +1749,7 @@ Parsers, rules, fingerprints, and model/MCP reputation are **continuously update
    Signed content bundle (semver, Ed25519, reproducible build)
         |
         v
-   CDN --> Edge Node pulls on schedule
+   CDN --> Edge Collector pulls on schedule
         |
         +-- staged rollout: canary (1%) -> 10% -> 100% over 72h
         +-- customer can pin a version
@@ -1686,7 +1786,7 @@ Parsers, rules, fingerprints, and model/MCP reputation are **continuously update
                                   OVERLOOK SaaS
 
   Segmented zones (OT, PCI, DMZ):
-      lightweight satellite collector -> forwards to Edge Node
+      lightweight satellite collector -> forwards to Edge Collector
       (collection only; no analytics, no credential vault, no state)
 ```
 
@@ -1712,13 +1812,13 @@ Parsers, rules, fingerprints, and model/MCP reputation are **continuously update
              -> no static credentials anywhere
 ```
 
-The Edge Node always initiates. Overlook SaaS never holds customer cloud credentials and never calls customer cloud APIs. This is worth stating explicitly in the security whitepaper, because it eliminates the "vendor gets breached, all customers' clouds are exposed" scenario that has burned this industry repeatedly.
+The Edge Collector always initiates. Overlook SaaS never holds customer cloud credentials and never calls customer cloud APIs. This is worth stating explicitly in the security whitepaper, because it eliminates the "vendor gets breached, all customers' clouds are exposed" scenario that has burned this industry repeatedly.
 
 ### 18.3 Deployment levels
 
 | Level | Components | Adds | Typical time to value |
 |---|---|---|---|
-| **1** | Edge Node | Cloud/identity/network/app posture, asset + AI inventory, TrustGraph, attack paths, basic Shadow AI | 1 day to first graph, 1 week to full |
+| **1** | Edge Collector | Cloud/identity/network/app posture, asset + AI inventory, TrustGraph, attack paths, basic Shadow AI | 1 day to first graph, 1 week to full |
 | **2** | + Agent | Host runtime context, local AI + MCP discovery, IDE assistant visibility, host response | +2 weeks (rollout) |
 | **3** | + AI Gateway | Prompt security, tool-call analysis, RAG inspection, agent behaviour, AI DLP context | +4 weeks (integration) |
 
@@ -1734,7 +1834,7 @@ Level 1 must be independently valuable and independently sellable. If a customer
 
 ### 19.1 Two kinds, in two places
 
-**Local correlation (Edge Node)** — operates on raw events within a time window, with full fidelity, before data is reduced.
+**Local correlation (Edge Collector)** — operates on raw events within a time window, with full fidelity, before data is reduced.
 - Sequence detection: failed auth × 20 → success → privilege change
 - First-seen: this service account has never called this API before
 - Rare-value: this user has never logged in from this ASN
@@ -1742,7 +1842,7 @@ Level 1 must be independently valuable and independently sellable. If a customer
 
 Output: a `FINDING` or `EVENT_SUMMARY` fact. The raw events stay local.
 
-**Global correlation (SaaS)** — operates on the graph, across sources and Edge Nodes, without any raw events.
+**Global correlation (SaaS)** — operates on the graph, across sources and Edge Collectors, without any raw events.
 - Structural: an identity with `CAN_ASSUME` to an admin role and no MFA and dormant 90 days
 - Cross-domain: a repository containing a secret that authenticates to a role that reaches a crown jewel
 - Temporal: a new admin edge appeared 3 hours after a suspicious authentication finding
@@ -1800,7 +1900,7 @@ The single hardest technical problem in the system, and the one most often done 
 
 A raw IAM policy says: `principal P may perform action A on resource R, if condition C`. Converting that into a graph edge `P CAN_READ R` requires evaluating a permission model that, in AWS alone, involves identity policies, resource policies, permission boundaries, SCPs, session policies, and condition keys — with a specific evaluation order and explicit-deny precedence.
 
-**Where to compute it:** at the Edge Node, not in SaaS. Three reasons.
+**Where to compute it:** at the Edge Collector, not in SaaS. Three reasons.
 
 1. Policy documents are customer data. Shipping them to SaaS breaks the privacy model.
 2. The closure is far smaller than the input. Thousands of policy documents collapse to a few hundred thousand resolved edges.
@@ -1889,7 +1989,7 @@ The path in the original brief, traced through every component. This is the refe
 
   WHO SAW WHAT
 
-  Edge Node "EDGE-DC1" (on-prem):
+  Edge Collector "COL-DC1" (on-prem):
     AD connector    -> IDENTITY   Priya  (canonical email:priya.s@corp.com)
                     -> MEMBER_OF  GRP "Developers"
     Oracle connector-> DATASTORE  prod-oracle-01, classified PII, 4.2M records
@@ -1897,7 +1997,7 @@ The path in the original brief, traced through every component. This is the refe
                                   port 1521 permitted
     NetFlow         -> CONNECTS_TO observed 10.8.0.x -> 10.4.2.17:1521
 
-  Edge Node "EDGE-AWS" (cloud):
+  Edge Collector "EDGE-AWS" (cloud):
     GitHub connector-> REPOSITORY payments-api
                     -> IDENTITY  priya.s@corp.com CAN_DEPLOY payments-api
                     -> PIPELINE  gha-deploy-prod
@@ -1935,7 +2035,7 @@ The path in the original brief, traced through every component. This is the refe
       ------------------------------------------------------
       RISK SCORE 87 / 100  CRITICAL
 
-  IN THE UI (with de-tokenization from both Edge Nodes)
+  IN THE UI (with de-tokenization from both Edge Collectors)
     Priya S -> payments-api -> GitHub Actions -> GHADeployRole
       -> EC2AppRole -> i-0abc123 -> VPN -> prod-oracle-01 -> 4.2M PII records
 
@@ -1948,7 +2048,7 @@ The path in the original brief, traced through every component. This is the refe
     2 require configuration updates.
 ```
 
-Note what made this possible: **five connectors across two Edge Nodes, one canonical key, one deterministic token.** Remove any of those and the path is invisible. This is why Part II matters more than Part III.
+Note what made this possible: **five connectors across two Edge Collectors, one canonical key, one deterministic token.** Remove any of those and the path is invisible. This is why Part II matters more than Part III.
 
 ---
 
@@ -2048,7 +2148,7 @@ The bitemporal graph (§9.2) gives all of this without extra machinery. The chan
                PROPERTY_CHANGED | CONFIDENCE_CHANGED,
          subject, predicate, object,
          before, after,
-         detected_at, source, edge_node_id,
+         detected_at, source, collector_id,
          significance: computed
        }
 
@@ -2117,7 +2217,7 @@ Presentation matters more than computation:
 ```
   1. NETWORK        DNS queries, TLS SNI, proxy logs, firewall logs
                     -> which AI services are being reached, by whom
-                    Sources: Edge Node connectors (DNS, FW, proxy, SWG)
+                    Sources: Edge Collector connectors (DNS, FW, proxy, SWG)
 
   2. HOST           processes, installed software, config files, extensions
                     -> local models, MCP servers, IDE assistants, SDKs
@@ -2516,7 +2616,7 @@ Nothing in that finding requires a vulnerability, a CVE, a malicious actor, or a
 
 The design principle in the original brief is correct and should be defended against every future convenience argument:
 
-> **Overlook SaaS never controls an agent directly. Every command passes through the customer's Edge Node, which may refuse it.**
+> **Overlook SaaS never controls an agent directly. Every command passes through the customer's Edge Collector, which may refuse it.**
 
 Post-2024, the industry has learned what happens when a vendor can push arbitrary instructions to every endpoint simultaneously. The customer-side veto is not bureaucracy; it is the feature that makes response deployable in a regulated environment.
 
@@ -2584,10 +2684,10 @@ Note the **double signature** and the **token resolution at the Edge**. SaaS iss
 
 Start with exactly these. Each is narrow, reversible, and locally verifiable.
 
-**Quarantine host.** Isolate network access except to the Edge Node.
+**Quarantine host.** Isolate network access except to the Edge Collector.
 ```
    Implementation: local firewall rules (Windows Filtering Platform,
-   nftables, pf) — allow only Edge Node IP:port, deny all else.
+   nftables, pf) — allow only Edge Collector IP:port, deny all else.
    TTL MANDATORY. Default 4 hours, max 24.
    Auto-release on TTL expiry EVEN IF the Edge is unreachable —
    the agent's own timer releases it. A quarantine that survives a
@@ -2714,12 +2814,12 @@ The de-tokenization flow (§7.4) in practice, since it is the least conventional
            IDN-9f3a -> AGT-4c8d -> IDN-svc7e2 -> ROL-2b8e -> DST-1c4b
 
   09:14  Browser collects the 47 unique tokens on screen.
-         Browser -> Edge Node (DIRECT, not via SaaS):
+         Browser -> Edge Collector (DIRECT, not via SaaS):
            POST https://overlook-edge.corp.local/api/v1/resolve
            Authorization: Bearer <SaaS-issued JWT>
              { sub: "analyst@corp.com", scope: ["resolve:identity",
                "resolve:asset","resolve:datastore"], exp: +5min,
-               aud: "EDGE-ap-south-1-a" }
+               aud: "COL-ap-south-1-a" }
            Body: { tokens: [ 47 tokens ] }
 
   09:14  Edge validates JWT signature (SaaS key pinned at enrollment),
@@ -2767,7 +2867,7 @@ A platform holding a complete map of a customer's attack surface is the single m
 
 This must be addressed proactively, in writing, before the first customer's security team asks:
 
-**Edge Node**
+**Edge Collector**
 - Minimal, immutable base image; read-only root filesystem where possible
 - No inbound ports except the local UI and agent gateway, both mTLS
 - Credential vault separate from connector processes, KMS/HSM-backed
@@ -2848,7 +2948,7 @@ One page with a drawer for detail beats seven separate pages. Every item links b
 ```
   Per large tenant, steady state:
 
-  Edge Node:  2.4 TB/day ingested, 12 MB/day egress to SaaS
+  Edge Collector:  2.4 TB/day ingested, 12 MB/day egress to SaaS
   SaaS:       ~8M nodes, ~120M edges
               ~40k graph writes/day after dedup
               path recomputation: incremental, ~200ms per change event
@@ -2879,7 +2979,7 @@ Things this document does not settle. Each needs an explicit decision before bui
 | # | Decision | Options | Lean |
 |---|---|---|---|
 | 1 | Graph storage | Postgres / Neo4j / custom | Postgres for v1, interface-isolated |
-| 2 | Edge Node packaging | OVA + AMI / container / installer | OVA + AMI + container; Windows installer later |
+| 2 | Edge Collector packaging | OVA + AMI / container / installer | OVA + AMI + container; Windows installer later |
 | 3 | Resolution Directory hosting | Primary Edge / dedicated service / customer DB | Primary Edge for v1 |
 | 4 | Own agent vs EDR-only for v1 | Build thin agent / integrate only | Integrate only for v1; thin agent for AI/MCP discovery in v2 |
 | 5 | AI Gateway first mode | Reverse proxy / SWG integration / extension / SDK | Reverse proxy + SDK first |
@@ -2903,7 +3003,7 @@ An honest pre-mortem. Each of these has killed a comparable product.
 
 3. **Path explosion and noise.** 47,000 paths is the same failure as 60,000 vulnerabilities. *Mitigation:* choke points as the primary object, equivalence classes, crown-jewel scoping, and a hard rule that no view shows more than ~50 items.
 
-4. **The Edge Node becoming an operational burden.** If customers must babysit an appliance, they will not renew. *Mitigation:* aggressive self-monitoring, automatic recovery, honest health reporting, and a support model that works without receiving customer data.
+4. **The Edge Collector becoming an operational burden.** If customers must babysit a collector, they will not renew. *Mitigation:* aggressive self-monitoring, automatic recovery, honest health reporting, and a support model that works without receiving customer data.
 
 5. **De-tokenization friction.** If analysts cannot see names easily, they will not use the product. *Mitigation:* build the browser-to-Edge resolve path in v1, not v3; make degraded mode genuinely usable; solve the remote-analyst case explicitly (DMZ Edge or customer-hosted relay).
 
@@ -2913,104 +3013,252 @@ An honest pre-mortem. Each of these has killed a comparable product.
 
 ---
 
-## 38. Build model
+## 38. Build model — phased, with stop/go gates
 
-Overlook is built as **one system, in one program of work**. There are no delivery phases, no wedge release, and no capability held back for a later stage. The architecture is designed so that parallel tracks can proceed simultaneously against stable contracts, and the sequencing that does exist is dependency ordering measured in weeks of lead time, not roadmap stages measured in quarters.
+**Normative, per the Engineering Handoff §26–§28 and §33.**
 
-### 38.1 What makes parallel construction possible
+Earlier drafts of this document argued for parallel tracks with no phases. **The handoff supersedes that.** The build is sequential, gated, and each phase has an explicit exit criterion. The rationale is sound: the lower-level pipeline must be stable before higher subsystems are built on it.
 
-Three contracts decouple the work. Once they are fixed, every track can proceed without waiting on the others:
+> *"DO NOT BUILD THE WHOLE COLLECTOR AT ONCE."* — handoff §37
 
-```
-   THE SECURITY FACT SCHEMA (Ch. 5)
-      decouples the Collection Plane from the Intelligence Plane.
-      Connector authors and graph engineers never block each other.
-
-   THE ENTITY MODEL AND PREDICATE VOCABULARY (Ch. 6)
-      decouples every connector from every other connector, and
-      decouples all of them from the attack path engine.
-
-   THE COMMAND AND CONTENT ENVELOPES (Ch. 15, 17)
-      decouple the Edge Node from SaaS release cycles, and decouple
-      content (parsers, primitives, fingerprints) from code entirely.
-```
-
-**These three must exist before anything else is built.** They are the only true prerequisite in the system, and they are a matter of weeks, not quarters.
-
-### 38.2 The parallel tracks
+### 38.1 The mandatory work cycle for every feature
 
 ```
-  PLATFORM        Edge Node runtime — the five roles, transport,
-                  enrollment, credential vault, local UI, sync,
-                  offline buffering, health
+  Requirement → Technical Design → Interface/Schema Definition
+    → Implementation → Unit Test → Integration Test
+    → Negative/Failure Test → Performance Test (where applicable)
+    → Metrics + Evidence → Documentation → PR/Review
+    → PASS GATE → Next Phase
 
-  CONNECTORS      the framework and the fleet
-                  (see 03-connectors.md — five sub-tracks, 118 connectors)
-
-  GRAPH           entity resolution, Resolution Directory, tokenization,
-                  the bitemporal graph, coverage windows, change feed
-
-  IAM             permission closure per cloud, escalation primitive
-                  engine, directory depth, CIEM
-                  (see 02-iam-deep-dive.md)
-
-  ANALYTICS       attack path engine, risk scoring, choke points,
-                  blast radius, graph simulation
-
-  AI              AI entity discovery, agent and MCP modelling,
-                  the AI Gateway, prompt inspection
-
-  ENDPOINT        the Overlook Agent — collection and response executor
-
-  RESPONSE        the signed command chain, approvals, impact preview,
-                  Break Attack Path
-
-  CONTENT         iam-semantics, escalation primitives, parsers,
-                  AI fingerprints, MCP reputation, classification patterns
-                  — ships independently of all code
-
-  EXPERIENCE      SaaS console, local UI, de-tokenization path,
-                  onboarding, investigation workspace
+  · no feature is complete because the happy path ran once
+  · every feature ships observability: success count, failure count,
+    latency, resource consumption
+  · every persistent format and external interface is versioned
+  · every failure path defines retry, drop, dead-letter or operator
+    action
+  · the 12 vCPU / 64 GB / 1 TB ceiling is a CONTINUOUS design
+    constraint, not an end-of-project benchmark
 ```
 
-### 38.3 The lead-time dependencies
+### 38.2 The phases
 
-Not sequencing — lead times. Each is a matter of a few weeks of head start, not a gate that stops other work.
+| Phase | Scope | Exit gate |
+|---|---|---|
+| **0 · Design freeze & contracts** | Architecture baseline, Security Fact v1, internal envelope, config model, repo structure | No production-pipeline coding until Security Fact v1 and the envelope are versioned |
+| **1 · Collector skeleton** | Go service, config loader, structured logging, health, metrics, graceful start/stop | 100 restart cycles, no stale locks or config corruption |
+| **2 · Ingestion layer** | Syslog TCP/UDP + HTTP test input, source identity, bounded ingress queue | 5K EPS with no unexplained loss; malformed traffic cannot crash |
+| **3 · Queue & backpressure** | Bounded queue, pressure metrics, overflow policy | Limits enforced, no unbounded RAM, overflow visible |
+| **4 · Parser framework** | Registry, selection, generic syslog + initial vendor parsers | Parser errors isolated; valid/malformed/edge coverage; latency measured |
+| **5 · Normalization & mapping** | Common field model, coercion, timestamps, vendor extensions | Mapping corpus passes; source and receive timestamps preserved |
+| **6 · Security Fact engine** | Fact v1 builder, validation, deterministic IDs | 100% of accepted output validates; replay does not create new identity |
+| **7 · Deduplication & filtering** | Duplicate suppression, noise policy, counters | No silent suppression; decisions measurable and reversible |
+| **8 · Lightweight enrichment** | Local asset/user/IP context, bounded caches, provenance | Cache bounded; enrichment failure never blocks fact creation |
+| **9 · Entity resolution** | Stable local IDs, aliases, TTL cache, conflict handling | Conflicts NOT force-merged; provenance and confidence retained |
+| **10 · Encrypted local spool** | Crash-safe durable queue, encryption, watermarks, replay state | Disconnect/restart/reconnect returns expected accepted count |
+| **11 · SaaS uploader** | Batching, compression, mTLS, ACK, retry, controlled replay | At-least-once; no retry storm; replay does not starve control plane |
+| **12 · Agent session layer** | Registration, auth, heartbeat, persistent session, telemetry | Wrong-tenant agent rejected; reconnect has jitter/backoff |
+| **13 · Response broker** | Dedicated control stream, priority queue, verification, ACK | P0 latency measured under 5K EPS + replay load |
+| **14 · Agentless connector SDK** | REST/poll/webhook interface, checkpointing, secrets, delta | One reference connector proves the full lifecycle |
+| **15 · Operations API/UI** | Connector management, health, EPS, queue, disk, sessions, diagnostics | Auth enforced; diagnostic bundle redacts secrets |
+| **16 · Security hardening** | Privileges, mTLS lifecycle, secrets, audit, SBOM | No plaintext credentials anywhere; revoked-cert test passes |
+| **17 · Performance qualification** | 1K/5K/10K sustained, event-size and agent-count matrices | 5K baseline comfortable; 10K recorded; ceiling respected |
+| **18 · Failure & recovery qualification** | Outage, disk pressure, worker crash, malformed storm, cert revoke | Degrades predictably; recovers without manual repair |
+| **19 · Packaging / upgrade** | systemd/container/VM, versioning, config migration, rollback | Clean install and N-1 → N upgrade tested |
+| **20 · v1.0 candidate** | Docs, tests, benchmarks, known limitations, release notes | Definition of Done satisfied; no open P0/P1 |
+
+### 38.3 Release roadmap
 
 ```
-   Contracts (38.1)         must lead everything                ~4 weeks
-   Connector framework      must lead the connector fleet       ~6 weeks
-   Entity resolution        must lead the path engine           ~4 weeks
-   Permission closure       must lead escalation primitives     ~4 weeks
-   Security Fact + graph    must lead the SaaS console          ~4 weeks
-   Agent transport          must lead response execution        ~6 weeks
-
-   Everything else runs concurrently.
+  v0.1.0  skeleton + health/metrics/config
+  v0.2.0  syslog ingestion + bounded queue
+  v0.3.0  parser framework + initial parser pack
+  v0.4.0  normalization / common mapping
+  v0.5.0  Security Fact v1 generation
+  v0.6.0  encrypted spool + SaaS upload/replay
+  v0.7.0  agent sessions + heartbeat
+  v0.8.0  response broker + control plane
+  v0.9.0  connectors + hardening + performance
+  v1.0.0  production candidate
 ```
 
-### 38.4 The rule that keeps it honest
+### 38.4 The five findings the product exists to produce
 
-> Every track must produce something that contributes to a finding no other tool in the customer's environment can produce. Work that only makes the platform more capable, without changing what the customer can learn, is infrastructure — necessary, but never the measure of progress.
-
-The five findings the whole system exists to produce:
+Unchanged, and now positioned correctly: **all five are SaaS-side outputs** computed from Security Facts. They are not collector deliverables.
 
 ```
-  1. AI PRIVILEGE GAP     user privilege < agent privilege, reaching a crown jewel
-  2. ESCALATION TO ADMIN  a synthesized path that no policy declares
-  3. HYBRID PATH          on-prem AD -> Entra -> cloud -> production data
-  4. CHOKE POINT          one policy line, thousands of paths
-  5. RIGHTSIZE            340 permissions granted, 12 used, policy attached
+  1  AI PRIVILEGE GAP     user privilege < agent privilege, to a crown jewel
+  2  ESCALATION TO ADMIN  a synthesized path no policy declares
+  3  HYBRID PATH          on-prem AD → Entra → cloud → production data
+  4  CHOKE POINT          one policy line, thousands of paths
+  5  RIGHTSIZE            340 permissions granted, 12 used
 ```
-
-If a piece of work does not eventually serve one of those five, it should be challenged.
 
 ---
 
+## 39. Scope boundary — collector versus SaaS
+
+**Normative, per handoff §3.**
+
+```
+  EDGE COLLECTOR OWNS
+    agent telemetry listener and session management
+    syslog TCP/UDP ingestion
+    REST/webhook connector framework
+    cloud/SaaS polling connector framework
+    parser engine and registry
+    normalization and common field mapping
+    deduplication, filtering, lightweight enrichment
+    LOCAL entity cache and LIGHTWEIGHT entity resolution
+    Security Fact generation and validation
+    compression and encryption
+    local persistent queue/spool, replay, retry, backpressure
+    configuration and secrets handling
+    heartbeat and health metrics
+    persistent control channel and response broker
+    local management API/UI
+
+  OVERLOOK SAAS OWNS
+    PostgreSQL state database
+    ClickHouse analytics database
+    global TrustGraph
+    GLOBAL entity correlation
+    risk scoring engine
+    attack-path computation
+    heavy ML training/inference
+    long-term raw log archive (not a collector responsibility)
+    main customer analytics UI
+    full SIEM correlation/rule engine (not part of the collector)
+```
+
+### 39.1 What this repositions in our design set
+
+| Our material | Where it now belongs |
+|---|---|
+| `engines/01`–`05` orchestration, receive, parser, normalizer, resolution | **Collector.** Aligned. |
+| `engines/06` permission closure | **SaaS** — see escalation E4 (§41) |
+| `engines/07` escalation matcher | **SaaS** |
+| `engines/08` posture/correlation/classification | **SaaS**, except lightweight local filtering |
+| `engines/09` graph engine | **SaaS** — the collector holds a bounded entity *cache*, not a graph |
+| `engines/10`–`12` fact builder, privacy gate, transport | **Collector.** Aligned. |
+| `analytics/*` crown jewels, paths, scoring, choke points, metrics | **SaaS, entirely.** Retitled as such. |
+| `connectors/*`, `collectors/*`, `ingestion/*`, `autoparser/*` | **Collector.** Aligned. |
+
+---
+
+## 40. Reference architecture
+
+**Per handoff §4.**
+
+```
+  CUSTOMER ENVIRONMENT
+    Overlook Agents      Cloud/SaaS APIs      Syslog / Network
+          │                    │                     │
+          └────────────────────┼─────────────────────┘
+                               ▼
+                  ┌──────────────────────────┐
+                  │  OVERLOOK EDGE COLLECTOR │
+                  │                          │
+                  │  Ingest → Queue → Parse  │
+                  │  → Normalize → Map       │
+                  │  → Deduplicate → Enrich  │
+                  │  → Resolve entities      │
+                  │  → Security Facts        │
+                  │  → Compress / Encrypt    │
+                  │  → Local spool           │
+                  │                          │
+                  │  Response broker         │
+                  │  (independent path)      │
+                  └────────────┬─────────────┘
+                               │ mTLS / 443
+                               ▼
+                        OVERLOOK SAAS
+                               │
+                     Ingestion / Event Bus
+                        ┌──────┴──────┐
+                        ▼             ▼
+                   PostgreSQL     ClickHouse
+                        └──────┬──────┘
+                               ▼
+                          TrustGraph
+```
+
+---
+
+## 41. Open escalations raised by this alignment
+
+Every item below requires review under handoff §25.3 or §35.1 **before** it is built. They are recorded here rather than resolved unilaterally.
+
+```
+  E1  IS THE SECURITY FACT PLAINTEXT OR TOKENIZED?          CRITICAL
+      Handoff §9 shows subject.id = "john@example.com" and
+      hostname = "laptop-221" in clear. Our entire differentiation
+      (§2.3, "residency is not blindness") requires HMAC tokens with
+      a customer-held key.
+      · plaintext  → simpler collector, SaaS-side global resolution,
+                     conventional, ships faster
+      · tokenized  → the only claim that survived the competitive
+                     survey, and it forces resolution and closure
+                     onto the collector
+      Nearly every escalation below follows from this one.
+
+  E2  FACT GRANULARITY: PER EVENT OR PER RELATIONSHIP?      CRITICAL
+      Handoff §9 has event_id/timestamp/received_at — one fact per
+      event. Our design merges N observations into one fact with
+      first_seen, last_seen and observation_count.
+      Consequence: at 5K EPS their model emits 5K facts/second;
+      ours emits ~2,900/day from 2.2 TB. This is the 200,000:1
+      reduction, and it does not exist in the handoff schema.
+
+  E3  COVERAGE WINDOWS AND RETRACTION                       HIGH
+      The handoff has no mechanism by which SaaS may safely delete
+      a fact. Without one, a broken connector silently resolves
+      findings and the exposure score improves while nothing
+      changed. PROPOSED: add a coverage_window object emitted on
+      complete enumeration.
+
+  E4  WHERE DOES PERMISSION CLOSURE RUN?                    HIGH
+      Not in the collector's scope list (§3.1); SaaS owns risk and
+      attack paths. But closure needs raw IAM policy documents.
+      Either they are uploaded — contradicting "send only
+      normalized facts" (§2) — or closure runs on the collector as
+      a CPU-heavy workload not budgeted within 12 vCPU.
+
+  E5  "risk": 72 IN THE SECURITY FACT                       MEDIUM
+      A collector cannot compute risk. Risk is a function of the
+      graph, crown jewels and path reachability, none of which
+      exist at the edge. Either the field is a source-supplied
+      severity mislabelled, or the boundary is wrong.
+
+  E6  LOCAL ANALYTICS DATASET vs THE 1 TB CEILING           MEDIUM
+      Parquet + DuckDB (04 §28.1) does not fit alongside a
+      600-700 GB spool. Drop it, shrink it to 7 days, or place it
+      on an add-on volume outside the ceiling.
+
+  E7  EVIDENCE RETENTION vs THE 1 TB CEILING                MEDIUM
+      90-day evidence at ~3 TB does not fit. PROPOSED: 14-day
+      default, hash plus bounded excerpt rather than full artifact.
+
+  E8  MULTI-COLLECTOR ENTITY RESOLUTION                     HIGH
+      §19.3 says SaaS performs global correlation and collectors
+      need no east-west communication. That works only if facts are
+      plaintext (E1). With tokens, SaaS sees two different tokens
+      for the same person and cannot join them — which is why we
+      specified a Resolution Directory. Scale-out makes this worse.
+
+  E9  AUTO-PARSER                                           MEDIUM
+      Handoff §8 is a hand-written parser plugin framework. There
+      is no template mining, derivation or proposal workflow. Our
+      autoparser/ series proposes one. For an MSSP onboarding
+      customer devices nobody wrote a parser for, this is the
+      difference between scaling and bespoke integration work.
+```
+
+---
 ## Appendix A — Reading the original brief against this document
 
 | Original brief | This document | Change |
 |---|---|---|
-| Edge Node: 28 responsibilities | 5 roles with distinct resource profiles | Decomposed |
+| Edge Collector: 28 responsibilities | 5 roles with distinct resource profiles | Decomposed |
 | "Tokenized identity IDs" | Deterministic HMAC with customer-held key | Specified; makes multi-Edge possible |
 | De-tokenization | Browser-to-Edge direct resolve | **Added** — was missing entirely |
 | Entity resolution at Edge | + Resolution Directory across Edges | **Added** — required for multi-Edge |
@@ -3031,11 +3279,11 @@ If a piece of work does not eventually serve one of those five, it should be cha
 `Choke Point` — an edge appearing in many paths; removing it breaks all of them.
 `Coverage Window` — proof that a source ran completely, enabling safe tombstoning.
 `Crown Jewel` — customer-designated critical asset; the target of path computation.
-`Edge Node` — the customer-side appliance.
+`Edge Collector` — the customer-side collector.
 `Evidence Reference` — hash pointing at raw evidence retained at the Edge.
 `Permission Closure` — resolved effective permissions after policies, boundaries, and conditions.
 `Privacy Gate` — the component deciding what may leave the customer environment.
-`Resolution Directory` — tenant-wide alias-to-canonical-key mapping shared across Edge Nodes.
+`Resolution Directory` — tenant-wide alias-to-canonical-key mapping shared across Edge Collectors.
 `Security Fact` — the only unit of data crossing from Edge to SaaS.
 `Token` — deterministic tenant-keyed pseudonym.
 `TrustGraph` — the unified bitemporal graph in SaaS.

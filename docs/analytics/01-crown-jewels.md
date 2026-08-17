@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 Criticality answers *what is worth protecting*. It is the target the path engine computes toward, the multiplier in every score, and the input to the response protected-asset list.
@@ -64,7 +73,7 @@ This document is first in the series because everything else consumes it.
 
   5  INFRASTRUCTURE ROLE                      authority 0.75
      identity providers · certificate authorities · CI/CD systems ·
-     secret stores · backup systems · the Overlook appliance itself
+     secret stores · backup systems · the Overlook collector itself
      → compromise of any of these is compromise of everything
        downstream
 
@@ -165,7 +174,7 @@ Borrowed from Microsoft, where critical-asset classification feeds Defender for 
 
 **Do not let criticality be gamed.** If disconnecting the DLP connector drops classification and therefore criticality and therefore the exposure score, the score is worse than useless. See `06 §5` — coverage-adjusted scoring.
 
-**Record-count bucket, not exact count.** A datastore with 4.2M PII records is critical; one with 40 is a finding of a different kind. But the exact number never leaves the appliance (`../13-contracts.md §IX`), so criticality derivation uses the bucket.
+**Record-count bucket, not exact count.** A datastore with 4.2M PII records is critical; one with 40 is a finding of a different kind. But the exact number never leaves the collector (`../13-contracts.md §IX`), so criticality derivation uses the bucket.
 
 ---
 

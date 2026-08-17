@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 For records that survive L0/L1 as **unstructured free text**, separate the constant parts from the variable parts.
@@ -89,7 +98,7 @@ The ICSE'19 benchmark (*Tools and Benchmarks for Automated Log Parsing*) evaluat
 
 ## 4. Adaptations we need
 
-Vanilla Drain assumes a homogeneous stream. A security appliance is not one.
+Vanilla Drain assumes a homogeneous stream. A security collector is not one.
 
 ```
   A1  PARTITION BY SOURCE FIRST
@@ -149,7 +158,7 @@ template:
     pos_10: [4122, 8891, 2201, ...]
 ```
 
-**`sample_values` is what L3 types and what L4 maps.** It is also customer data and never leaves the appliance — it exists to inform local inference and human confirmation, nothing else.
+**`sample_values` is what L3 types and what L4 maps.** It is also customer data and never leaves the collector — it exists to inform local inference and human confirmation, nothing else.
 
 ---
 

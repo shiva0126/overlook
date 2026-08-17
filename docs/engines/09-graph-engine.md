@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 The Graph Engine is where everything converges. Every observation from every source, after normalization, resolution and derivation, becomes a node or an edge here — with a lifetime, a confidence and a provenance trail.
@@ -87,7 +96,7 @@ The most dangerous operation in the system, and the reason E15 emits coverage wi
     from_token · to_token · predicate · attr_signature
     properties JSONB · weight · confidence
     first_seen · last_seen · removed_at
-    evidence_ref · edge_node_id
+    evidence_ref · collector_id
     PK (from_token, to_token, predicate, attr_signature)
 
   closure_can_assume        materialized transitive closure
@@ -176,7 +185,7 @@ A byproduct of the writer, not a separate system.
 
 ## 4. Considerations
 
-**Two graphs, one implementation.** The appliance graph holds plaintext canonical keys, this site's scope, full condition detail, short retention. The console graph holds tokens, merged scope, resolved edges, full bitemporal history. Same engine, two configurations (`../04 §15.1`). Design for both from the start rather than building for one and retrofitting.
+**Two graphs, one implementation.** The collector graph holds plaintext canonical keys, this site's scope, full condition detail, short retention. The console graph holds tokens, merged scope, resolved edges, full bitemporal history. Same engine, two configurations (`../04 §15.1`). Design for both from the start rather than building for one and retrofitting.
 
 **The access layer must be an interface.** Postgres is the right v1 choice and the wrong choice above ~10M edges. Everything above the graph — path engine, blast radius, change feed — must be swappable onto a different store without rewriting.
 
@@ -244,7 +253,7 @@ A byproduct of the writer, not a separate system.
 ## 8. Example: Meridian's graph
 
 ```
-  STEADY STATE, both Edge Nodes combined
+  STEADY STATE, both Edge Collectors combined
 
     entities                    ~2.9 million
       identities        14,100   (12,000 human + 2,100 NHI)

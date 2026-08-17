@@ -7,6 +7,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 # PART I — HOW TO USE THIS DOCUMENT
 
 ## 1. What this is
@@ -34,7 +43,7 @@ Changing these re-partitions data that already exists. They deserve disproportio
       ever built.
 
   ✕ CANONICAL KEY PRIORITY RULES               (Part IV)
-      must be byte-identical on every Edge Node in a deployment.
+      must be byte-identical on every Edge Collector in a deployment.
       Divergence fragments the graph SILENTLY — no error, no alert,
       just attack paths that quietly do not exist.
 
@@ -57,7 +66,7 @@ Changing these re-partitions data that already exists. They deserve disproportio
                       Redefining what CAN_READ means is a breaking
                       change to every consumer.
 
-  Every Edge Node asserts its contract version hash on sync.
+  Every Edge Collector asserts its contract version hash on sync.
   A mismatch between nodes in one deployment is an ALARM, not a
   warning — it is the precondition for silent graph fragmentation.
 ```
@@ -123,7 +132,7 @@ ASSET
   node                  K8s node
   endpoint              user endpoint (laptop, workstation)
   network_device        firewall, switch, router, load balancer host
-  storage_appliance     NAS / SAN
+  storage_collector     NAS / SAN
 
 APPLICATION
   (deployed application or service, distinct from the asset it runs on)
@@ -214,7 +223,7 @@ Every node, regardless of type:
 
 ```jsonc
 {
-  "canonical_key": "email:priya.s@meridian.com",   // plaintext, appliance only
+  "canonical_key": "email:priya.s@meridian.com",   // plaintext, collector only
   "type": "IDENTITY",
   "subtype": "human_user",
   "properties": { },                                // type-specific
@@ -327,7 +336,7 @@ Every node, regardless of type:
 
 ```
   last_seen · first_seen · observation_count · confidence
-  evidence_ref · sources · collection metadata · edge_node_id
+  evidence_ref · sources · collection metadata · collector_id
 ```
 
 ### 9.2 The two failure modes
@@ -366,7 +375,7 @@ The worked example: `mechanism` is significant on `CAN_ASSUME` because a direct 
   "confidence": 0.95,
   "first_seen": "...", "last_seen": "...", "removed_at": null,
   "evidence_ref": "sha256:8a1f...c4d2",
-  "edge_node_id": "EDGE-DC1"
+  "collector_id": "COL-DC1"
 }
 ```
 
@@ -595,7 +604,7 @@ Some actions map to **no capability**. They are ingredients that only matter in 
 
 ## 19. The contract between connectors and engines
 
-An **Observation** is one sighting, from one source, at one moment, about resolved entities. It never leaves the appliance and it carries **plaintext canonical keys** — resolution, derivation and fact-building all require them.
+An **Observation** is one sighting, from one source, at one moment, about resolved entities. It never leaves the collector and it carries **plaintext canonical keys** — resolution, derivation and fact-building all require them.
 
 ```jsonc
 {
@@ -608,7 +617,7 @@ An **Observation** is one sighting, from one source, at one moment, about resolv
     "collector": "iam.roles",
     "instance": "account:123456789012",
     "run_id": "run_01JC8Q2K7M4N5P6R7S8T9V0W1X",
-    "edge_node_id": "EDGE-CLD"
+    "collector_id": "COL-CLD"
   },
 
   "observation_type": "RELATIONSHIP",   // ENTITY | RELATIONSHIP |
@@ -656,6 +665,31 @@ An **Observation** is one sighting, from one source, at one moment, about resolv
 
 # PART VII — SECURITY FACT SCHEMA
 
+> **⚠ SUPERSEDED IN PART.** The Engineering Handoff §9 defines
+> **Security Fact v1** and it is the contract. Its mandatory fields are
+> `schema_version`, `tenant_id`, `collector_id`, `event_id`, `timestamp`,
+> `received_at`, `action`, `source.type`, at least one meaningful entity,
+> and `confidence` where derived.
+>
+> **Reinstated:** `tenant_id` — mandatory per §9.1. Part XI item 5 is
+> reversed.
+>
+> **`action` versus `predicate`:** the handoff uses a free-form `action`
+> string. Our closed predicate enum (§7) is a **PROPOSED EXTENSION** —
+> a free-form action cannot be traversed by a path engine, because the
+> engine must know which verbs mean reachability. Proposal: keep
+> `action` as the wire field and constrain its values to the enum.
+>
+> **PROPOSED EXTENSIONS below, all requiring §35.1 review:**
+> `fact_type` · `first_seen`/`last_seen`/`observation_count` (merge
+> semantics — ESCALATION E2) · `removed_at` and coverage windows
+> (ESCALATION E3) · `sources[]` with per-source agreement ·
+> `synthesized`/`primitive_id` provenance · tokenized subject/object
+> (ESCALATION E1).
+>
+> Everything in Part VII validates against the handoff schema as
+> additive fields. None of it is safe to build before E1–E3 are decided.
+
 ## 21. The five types
 
 ```
@@ -673,8 +707,8 @@ An **Observation** is one sighting, from one source, at one moment, about resolv
   "schema": "overlook.fact.v1",
   "fact_id": "01JC8Q2K7M4N5P6R7S8T9V0W1X",   // ULID, transport dedup only
   "fact_type": "RELATIONSHIP",
-  "edge_node_id": "EDGE-CLD",
-  // NO tenant_id — one appliance serves one customer (09 §2.1).
+  "collector_id": "COL-CLD",
+  // NO tenant_id — one collector serves one customer (09 §2.1).
   // The mTLS client certificate establishes which deployment
   // a batch came from; deployment_id lives in the batch header.
 
@@ -740,7 +774,7 @@ An **Observation** is one sighting, from one source, at one moment, about resolv
                      max(last_seen), min(first_seen), and the
                      highest-confidence source.
 
-  Replay MUST be idempotent. After a partition the appliance
+  Replay MUST be idempotent. After a partition the collector
   resends; without upsert-on-semantic-identity, every outage
   produces duplicate edges and every path count becomes untrustworthy.
 ```
@@ -795,7 +829,7 @@ connector:
   functions: [collect]             # respond is a SEPARATE manifest
 
   execution:
-    placement: any                 # any | pinned:<edge_node_id>
+    placement: any                 # any | pinned:<collector_id>
     requires_reachability: [aws_api_endpoints]
 
   auth:
@@ -962,7 +996,7 @@ Testable, not aspirational. This is the gate that unblocks parallel work.
   [ ] a validator REJECTS: unknown predicate, unknown entity type,
       missing required field, a field absent from the allow-list
   [ ] identical canonical key input produces an identical token on
-      two independently configured Edge Nodes
+      two independently configured Edge Collectors
   [ ] the same entity observed via two different priority-list
       attributes resolves to ONE canonical key
   [ ] a fact with only last_seen changed does NOT emit
@@ -972,7 +1006,7 @@ Testable, not aspirational. This is the gate that unblocks parallel work.
   [ ] a manifest with emits_coverage_window on a log_stream
       collector FAILS validation
   [ ] a PROPERTY fact carrying a plaintext hostname is QUARANTINED
-  [ ] contract version hash mismatch between two Edge Nodes ALARMS
+  [ ] contract version hash mismatch between two Edge Collectors ALARMS
 ```
 
 ## 33. Fixture set structure

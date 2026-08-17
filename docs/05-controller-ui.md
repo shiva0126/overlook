@@ -1,4 +1,4 @@
-# Overlook — The Controller: Local Appliance UI and Connector Control Plane
+# Overlook — The Controller: Local Collector UI and Connector Control Plane
 
 **Version:** 0.1 (design draft)
 **Date:** 2026-08-12
@@ -8,9 +8,18 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## What this document is
 
-The **Controller** is the appliance-local management plane: the UI and API that run on the Edge Node itself, inside the customer's environment.
+The **Controller** is the collector-local management plane: the UI and API that run on the Edge Collector itself, inside the customer's environment.
 
 `01-system-design.md` §16 gave it eight bullet points. That undersold it. The Controller is where three things happen that can happen nowhere else — anything requiring **plaintext customer data**, anything requiring **customer-held keys**, and anything the customer must be able to do **when Overlook SaaS is unreachable**.
 
@@ -48,7 +57,7 @@ Getting this wrong produces the wrong product, so state it plainly.
 
    NOT the SOC analyst
      analysts live in the SaaS console
-     they touch the appliance only through the resolve API, invisibly,
+     they touch the collector only through the resolve API, invisibly,
      via their browser
 
    NOT the CISO
@@ -71,7 +80,7 @@ Design implication: **an inbox, not a dashboard.** The landing surface is a prio
 ```
    IS                                    IS NOT
    ────────────────────────────────       ────────────────────────────────
-   appliance operation and config         an investigation console
+   collector operation and config         an investigation console
    connector control plane                an attack path viewer
    plaintext-requiring workflows          a findings triage queue
    customer-held key management           a reporting tool
@@ -82,7 +91,7 @@ Design implication: **an inbox, not a dashboard.** The landing surface is a prio
 
 ### 2.1 The line, drawn explicitly
 
-> The Controller operates the appliance and does the work that requires plaintext. The SaaS console does investigation and cross-domain correlation. When SaaS is unreachable, the Controller degrades to a **read-only local view** — enough to triage, not enough to replace.
+> The Controller operates the collector and does the work that requires plaintext. The SaaS console does investigation and cross-domain correlation. When SaaS is unreachable, the Controller degrades to a **read-only local view** — enough to triage, not enough to replace.
 
 The temptation to grow the Controller into a full local console must be resisted: it doubles the UI engineering and splits the product. The one exception is degraded mode (Chapter 29), and it should feel like a lifeboat, not a second home.
 
@@ -125,7 +134,7 @@ The temptation to grow the Controller into a full local console must be resisted
 ## 4. Top-level structure
 
 ```
-  OVERLOOK CONTROLLER · edge-ap-south-1-a
+  OVERLOOK CONTROLLER · col-ap-south-1-a
 
   ┌────────────────────────────────────────────────────────────────┐
   │  ⚠ ATTENTION (4)          ← the landing surface. An inbox.      │
@@ -430,7 +439,7 @@ Notes on this design:
 - **The paused instance shows who paused it, when, and why.** A free-text reason is mandatory on pause. Six months later somebody will ask.
 - **Every failure row states the graph consequence** — "1,204 entities going stale" — not just "error."
 - **`⏻ Stop all`** is deliberately top-right and always present. During an incident or a change freeze, an operator needs one button that halts every outbound API call. It should require a typed confirmation and log loudly.
-- **`Run on`** is a column at instance level (omitted above for width). Under the hybrid archetype a customer has two Edge Nodes, and the operator must be able to see and change which one executes a given instance (`08 §6.2`).
+- **`Run on`** is a column at instance level (omitted above for width). Under the hybrid archetype a customer has two Edge Collectors, and the operator must be able to see and change which one executes a given instance (`08 §6.2`).
 
 ### 8.1 Per-instance actions
 
@@ -723,7 +732,7 @@ Silent drift between profile and instance is how a config plane becomes untrustw
     On ceiling breach:  throttle  ▾   (throttle | pause | alert only)
 ```
 
-Two design commitments worth stating in the UI itself: the default is 30% of the customer's quota, and the other 70% is theirs. An operator who reads that sentence stops worrying about the appliance breaking their automation.
+Two design commitments worth stating in the UI itself: the default is 30% of the customer's quota, and the other 70% is theirs. An operator who reads that sentence stops worrying about the collector breaking their automation.
 
 ---
 
@@ -938,7 +947,7 @@ These are shown to CISOs and auditors. They are the privacy architecture made vi
   │   IDN-9f3a7c21e845b0d6 → ROL-2b8e4f19a70c5d33                 │
   │   [ show what this was before the Privacy Gate ▾ ]            │
   │   ┌────────────────────────────────────────────────────────┐  │
-  │   │ BEFORE (never left this appliance)                     │  │
+  │   │ BEFORE (never left this collector)                     │  │
   │   │   subject  email:priya.s@corp.com                      │  │
   │   │   object   arn:aws:iam::123456789012:role/DevOpsAdmin   │  │
   │   │   evidence <4.2 KB IAM policy document>                 │  │
@@ -1029,7 +1038,7 @@ An unexpected gift of the architecture: the customer gets a complete record of w
   RESPONSE POLICY
 
   MASTER              ○ enabled   ● DISABLED (default)
-    ⓘ While disabled, this appliance refuses every response
+    ⓘ While disabled, this collector refuses every response
       command from Overlook SaaS. SaaS cannot override this.
 
   ACTION CLASSES               (each independently controlled)
@@ -1049,7 +1058,7 @@ An unexpected gift of the architecture: the customer gets a complete record of w
 
   TTL CEILING           4h  ▾   (max any quarantine may last)
   AUTO-RELEASE          ☑ agent releases on TTL even if this
-                          appliance is unreachable
+                          collector is unreachable
 
   [ Command audit log ]                        [ ⏻ KILL SWITCH ]
 ```
@@ -1149,7 +1158,7 @@ Master-disabled by default is the right posture. A customer can deploy the entir
   AUDIT LOG              hash-chained, tamper-evident
     [ Export ]  [ Stream to SIEM ]  [ Verify chain ]
 
-  APPLIANCE
+  COLLECTOR
     version 2.1.0 · uptime 41d · [ upgrade ]
     enrollment: deployment DPL-acme-bank · cert expires 62d (auto-renew)
     tokenization key: customer KMS ● reachable · [ rotate ]
@@ -1167,7 +1176,7 @@ Master-disabled by default is the right posture. A customer can deploy the entir
    analysts, CISO                   the Overlook operator, auditors
    Overlook-managed SSO             the CUSTOMER's IdP, or local accounts
    works only when online           MUST work offline
-   grants resolve scopes            grants appliance control
+   grants resolve scopes            grants collector control
 ```
 
 They cannot be the same system, because the Controller must function when SaaS is unreachable — that is a core requirement, not an edge case. Consequences:
@@ -1188,7 +1197,7 @@ They cannot be the same system, because the Controller must function when SaaS i
   Auditor    reads everything, changes nothing
 ```
 
-Splitting Operator from Custodian is what lets a customer honestly claim that the person running the appliance cannot widen what leaves it.
+Splitting Operator from Custodian is what lets a customer honestly claim that the person running the collector cannot widen what leaves it.
 
 ---
 
@@ -1220,11 +1229,11 @@ Design consequences:
     ✓ collection, parsing, resolution, fact building
     ✓ facts buffering locally (queue 18% of 7-day capacity)
     ✓ evidence and token resolution for local users
-    ✓ all appliance configuration
+    ✓ all collector configuration
     ✓ local entity and finding view (read-only)
 
   Unavailable:
-    ✕ cross-appliance correlation and global attack paths
+    ✕ cross-collector correlation and global attack paths
     ✕ response actions
     ✕ content updates
 
@@ -1252,13 +1261,13 @@ The banner states specifically what does and does not work. A generic "connectio
   Q3  "Graph value" ranking for collectors — computed from live graph
       contribution, or declared statically in the manifest?
 
-  Q4  Profiles: appliance-local, or defined centrally in SaaS and
+  Q4  Profiles: collector-local, or defined centrally in SaaS and
       distributed? Central is nicer to operate, but it means SaaS can
       change what gets collected — which cuts against P5.
 
   Q5  Path-fragment analysis (§9.3) needs the path engine, which lives in
       SaaS. Does the Controller show it by fetching from SaaS (breaking
-      offline capability for that screen), or does the appliance compute
+      offline capability for that screen), or does the collector compute
       local fragments itself?
 
   Q6  Is `⏻ Stop all` a soft pause (finish in-flight, stop scheduling) or
@@ -1338,7 +1347,7 @@ After examining Stellar Cyber's connector control UI in detail (Appendix B), the
 
   5  NO EXECUTION PLACEMENT IN THE UI
      Doc 08 added it to the manifest; the UI never showed it. Under
-     the hybrid archetype every customer has two Edge Nodes.
+     the hybrid archetype every customer has two Edge Collectors.
      → added the "Run on" column (§8)
 
   6  NO CSV EXPORT

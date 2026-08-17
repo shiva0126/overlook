@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. Purpose
 
 Where a language model genuinely helps the auto-parser, where it must not be used, and the constraint that makes our situation different from everyone else's.
@@ -31,7 +40,7 @@ The 2024–2026 research is unambiguous that LLMs beat classical parsers on temp
       destroy the signal
 
   IT LEAVES TWO OPTIONS
-    1  a SMALL LOCAL MODEL on the appliance
+    1  a SMALL LOCAL MODEL on the collector
     2  inference over STRUCTURAL REPRESENTATIONS only — templates
        with values stripped, field shapes, type distributions —
        which carry no customer data and CAN leave
@@ -141,11 +150,11 @@ We take that one step further:
 ## 6. Model choice
 
 ```
-  DEFAULT — a small local model on the appliance
+  DEFAULT — a small local model on the collector
     3-8B parameter class, quantised, ONNX or GGUF, CPU inference
     runs in the SCANNER pool, never the realtime pool
     a few hundred inferences per source onboarding, offline
-    → adds ~2-4 GB to the appliance image and no runtime cost
+    → adds ~2-4 GB to the collector image and no runtime cost
 
   OPTION — customer-provided model endpoint
     a customer with their own internal LLM deployment may point us
@@ -205,7 +214,7 @@ We take that one step further:
 | Model overrides the outcome rule | False edges from failed logins | Deterministic rules run after, and veto |
 | Inconsistent proposals | Silent graph changes between runs | N-run agreement; disagreement lowers confidence |
 | Model becomes load-bearing | Cannot ship without it, cannot audit it | Everything the model does is optional; the auto-parser must work without it, at lower coverage |
-| Local model bloats the image | Appliance too large to deploy | Quantised small model, and it is an optional package |
+| Local model bloats the image | Collector too large to deploy | Quantised small model, and it is an optional package |
 
 ---
 

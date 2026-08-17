@@ -7,6 +7,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## What this document is, and is not
 
 This document is about **what our sources are worth** — the value-density analysis, what we collect and what we deliberately do not, and how our source strategy differs from an XDR's.
@@ -162,7 +171,7 @@ Not everything is judged on density.
 They differ in one property — **recoverability** — and that single property determines the durability contract, the failure behaviour and whether the source can ever drive retraction.
 
 ```
-  PULL      the appliance calls out and fetches
+  PULL      the collector calls out and fetches
             connector API polling · LDAP · database queries
             complete objects, self-describing, RE-FETCHABLE
             volume LOW · value density VERY HIGH
@@ -227,7 +236,7 @@ They differ in one property — **recoverability** — and that single property 
 What listens, what dials out, and what credential each needs.
 
 ```
-  ┌─ INBOUND — the appliance LISTENS ────────────────────────────┐
+  ┌─ INBOUND — the collector LISTENS ────────────────────────────┐
   │                                                              │
   │  syslog/udp:514      legacy. Lossy. Recommend migration.     │
   │  syslog/tcp:6514     TLS. Preferred.                         │
@@ -241,7 +250,7 @@ What listens, what dials out, and what credential each needs.
   │  AUTH: source IP allow-list · TLS client certs · HMAC        │
   └──────────────────────────────────────────────────────────────┘
 
-  ┌─ OUTBOUND — the appliance DIALS OUT ─────────────────────────┐
+  ┌─ OUTBOUND — the collector DIALS OUT ─────────────────────────┐
   │                                                              │
   │  cloud APIs           IRSA / Managed Identity / WIF          │
   │                       → NO STORED CREDENTIAL                  │
@@ -252,7 +261,7 @@ What listens, what dials out, and what credential each needs.
   │  mtls:443 → console   Mode 2 only. Outbound ONLY.            │
   │                                                              │
   │  NO INBOUND FROM OVERLOOK, EVER. The console never connects  │
-  │  to the appliance. No firewall rule is required for us.      │
+  │  to the collector. No firewall rule is required for us.      │
   └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -341,9 +350,9 @@ Now that both are studied (`06`, `11`), the contrast is precise.
 
 | | Stellar Cyber | Google SecOps | Overlook |
 |---|---|---|---|
-| Where connectors run | **inside the Data Processor** | Google cloud | **on the appliance, always** |
+| Where connectors run | **inside the Data Processor** | Google cloud | **on the collector, always** |
 | Where normalization happens | at the sensor (push), at the DP (pull) | Google cloud | one place, after the journal |
-| Customer-side component | sensor — filters and normalizes | forwarder — **ships raw** | Edge Node — **full analysis** |
+| Customer-side component | sensor — filters and normalizes | forwarder — **ships raw** | Edge Collector — **full analysis** |
 | Unit produced | Interflow record, **one per event** | UDM event, one per event | Security Fact, **one per relationship** |
 | Lifecycle | accumulates, enriched as it travels | written once at ingest | **collapses** — N observations → 1 fact |
 | Destination | data lake, indices | event + entity store | graph |
@@ -366,14 +375,14 @@ Now that both are studied (`06`, `11`), the contrast is precise.
 
 Stellar Cyber's connectors run on the Data Processor, which is fine for them — the DP is customer-side.
 
-**Ours must run on the appliance**, because they read policy documents, ACLs, trust policies and credential metadata. That is precisely the data that may not travel. A connector running anywhere else would defeat the architecture it exists inside.
+**Ours must run on the collector**, because they read policy documents, ACLs, trust policies and credential metadata. That is precisely the data that may not travel. A connector running anywhere else would defeat the architecture it exists inside.
 
 ---
 
 # PART V — EXAMPLE: MERIDIAN, ONE HOUR
 
 ```
-  09:00-10:00, EDGE-DC1
+  09:00-10:00, COL-DC1
 
   STREAM — the flood
     4 firewalls → syslog/tcp-tls:6514
@@ -393,7 +402,7 @@ Stellar Cyber's connectors run on the Data Processor, which is fine for them —
     ~2,100 of 8,500 endpoints reported (4h cadence, jittered)
     ~4.2 MB
     → journaled + fsync, THEN acked; each agent prunes on ack
-    → at 09:14 the appliance is briefly loaded and returns a
+    → at 09:14 the collector is briefly loaded and returns a
       slow-down hint. Agents extend their batch interval rather
       than dropping. Nothing is lost.
 
@@ -444,7 +453,7 @@ Stellar Cyber's connectors run on the Data Processor, which is fine for them —
       contract differs.
 
   Q4  Initial load takes ~14 hours. Should it be resumable across
-      an appliance restart, or is restarting from scratch
+      a collector restart, or is restarting from scratch
       acceptable given it happens once?
 ```
 

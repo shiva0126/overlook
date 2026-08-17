@@ -4,6 +4,15 @@
 
 ---
 
+> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
+> boundary and takes precedence over this document. Content here that
+> extends the handoff is a **PROPOSED EXTENSION** requiring review under
+> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. What it is
 
 One durable, append-only record of everything accepted, written before any processing.
@@ -54,7 +63,7 @@ Job 2 is why PULL sources are journaled at all, despite being re-fetchable.
   length      of everything after this field
   crc32       over provenance + payload
   timestamp   RECEIVE time, not source-reported time
-  provenance  connector, collector, instance, run_id, edge_node_id,
+  provenance  connector, collector, instance, run_id, collector_id,
               ingress class, priority class
   payload     the raw bytes exactly as received
 ```
@@ -124,7 +133,7 @@ Different per ingress class, because recoverability differs.
   The 24h grace exists so that a bug discovered the next morning is
   still reproducible.
 
-  DEFAULT CAPS, profile M
+  DEFAULT CAPS, Edge M
     push      2 GB      (low volume, high value — generous)
     agent     8 GB
     stream    40 GB     (aggregates only, so this is a lot of history)
@@ -225,14 +234,14 @@ Different per ingress class, because recoverability differs.
 
 **Per-class streams, not per-instance.** 41 AWS account instances writing to one `pull` stream is correct; 41 separate files is small-file proliferation with no benefit, because replay is scoped by source *class* and time anyway.
 
-**The journal is the appliance's most valuable target after the credential vault.** It holds raw customer data in the clear until segment rotation. Encryption at rest, filesystem permissions, and the fact that it lives on an appliance the customer controls are the mitigations — but it deserves to be named in the threat model.
+**The journal is the collector's most valuable target after the credential vault.** It holds raw customer data in the clear until segment rotation. Encryption at rest, filesystem permissions, and the fact that it lives on a collector the customer controls are the mitigations — but it deserves to be named in the threat model.
 
 ---
 
 ## 10. Example: Meridian, one hour
 
 ```
-  09:00-10:00, EDGE-DC1
+  09:00-10:00, COL-DC1
 
   WRITTEN
     source=fortigate.aggregate     5,000 records   ~1.2 MB
