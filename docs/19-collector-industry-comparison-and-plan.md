@@ -252,6 +252,8 @@ Acceptance criteria:
 - new sources can be onboarded without rewriting the collector core
 - long-tail parsing does not destabilize the main path
 
+For the full end-to-end flow and diagrams, see [Collector End-to-End Architecture](20-collector-end-to-end-architecture.md).
+
 ---
 
 ## 6. Collector architecture decisions implied by the comparison
@@ -332,4 +334,3 @@ If these are not measured, the collector will drift back toward a log lake.
 - https://learn.microsoft.com/en-us/azure/defender-for-cloud/concept-attack-path
 - https://learn.microsoft.com/en-us/azure/defender-for-cloud/how-to-manage-attack-path
 - https://learn.microsoft.com/en-us/azure/defender-for-cloud/defender-for-cloud-introduction
-
