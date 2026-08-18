@@ -27,5 +27,19 @@ Early architecture and design. Nothing implemented yet.
 ## Repository layout
 
 ```
-docs/    architecture and design documents
+docs/                   architecture and design documents
+  edge-collector/       ← the collector, service by service (start here)
+  engines/              engine-level detail
+  connectors/           the connector catalog and framework
+  collectors/           per-source collection mechanics
+  ingestion/            ingress mechanics
+  autoparser/           the auto-parser, L0–L5
+  analytics/            SaaS-side analytics and intelligence
 ```
+
+## Where to start
+
+`docs/edge-collector/` specifies the seven services of the Edge Collector as
+handed over — inputs, outputs, mechanics, resource budget and failure modes for
+each. It is the buildable layer; the rest of `docs/` is the reasoning underneath
+it.
