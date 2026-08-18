@@ -34,6 +34,7 @@ It never answers *how a collector works*. There is no collector equivalent of th
 | 01 | [Specification format](01-specification-format.md) | What a complete collector spec contains |
 | 02 | [Identity and IAM specs](02-spec-identity-and-iam.md) | The collectors that feed E6, E7 and E8 |
 | 03 | [Deployment set specs](03-spec-deployment-set.md) | FortiGate, CrowdStrike, FortiEDR, Scalefusion, Agent |
+| 04 | [Multi-source vendor playbooks](04-multi-source-vendor-playbooks.md) | Mixed-source intake, Fortinet, LDAP, cloud IAM, firewall streams |
 
 ---
 

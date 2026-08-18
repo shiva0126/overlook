@@ -247,6 +247,7 @@ The trajectory is clear: **unsupervised, open-model approaches now beat semi-sup
 | 05 | [LLM assistance](05-llm-assist.md) | Where a model helps, and the local-only constraint |
 | 06 | [Confirm and freeze](06-confirm-and-freeze.md) | Human-in-the-loop, and why the output must be deterministic |
 | 07 | [Parser lifecycle](07-lifecycle.md) | Drift, versioning, regression, sharing |
+| 08 | [Source manifest and parser registry](08-source-manifest-and-parser-registry.md) | Source budgets, parser selection, fallback, quarantine |
 
 ---
 
