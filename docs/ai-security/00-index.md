@@ -15,6 +15,9 @@
 | 01 | [Landscape and vendor comparison](01-landscape-and-vendor-comparison.md) | Palo Alto AI Access Security, Prisma AIRS, CrowdStrike AIDR, and adjacent tool patterns |
 | 02 | [End-to-end Overlook AI collector](02-end-to-end-overlook-ai-collector.md) | Source classes, collector layout, pipelines, and sequence diagrams |
 | 03 | [Product plan](03-product-plan.md) | What Overlook should copy, what it should not copy, and the phased build plan |
+| 04 | [Implementation backlog](04-implementation-backlog.md) | Work items mapped to Overlook modules, contracts, dependencies, and acceptance gates |
+| 05 | [Executive brief](05-executive-brief.md) | Short product and investment summary for decision-makers |
+| 06 | [Mermaid diagram pack](06-mermaid-diagram-pack.md) | Standalone architecture, flow, sequence, and failure diagrams |
 
 ---
 
@@ -37,4 +40,5 @@ The market leaders already split this into source classes and policy surfaces. O
 1. Read [Landscape and vendor comparison](01-landscape-and-vendor-comparison.md) to understand where Palo Alto and CrowdStrike are strong.
 2. Read [End-to-end Overlook AI collector](02-end-to-end-overlook-ai-collector.md) to see the architecture that fits Overlook's constraints.
 3. Read [Product plan](03-product-plan.md) to see the implementation priorities and product adjustments.
-
+4. Use the [Implementation backlog](04-implementation-backlog.md) to turn the plan into engineering work.
+5. Use the [Executive brief](05-executive-brief.md) and [Mermaid diagram pack](06-mermaid-diagram-pack.md) for reviews and handoffs.
