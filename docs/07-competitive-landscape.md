@@ -387,4 +387,22 @@ The argument against building Option B first: the privacy architecture is the mo
 
 ---
 
+## 8. Collector execution plan
+
+The market survey is only useful if it changes the collector plan.
+The practical translation lives here:
+
+- [Collector industry comparison and plan](19-collector-industry-comparison-and-plan.md)
+
+That document turns the vendor survey into an execution plan for:
+
+- source manifests
+- parser registry
+- canonical event schema
+- mixed-source collector intake
+- backpressure and replay
+- fact reduction and privacy gating
+
+---
+
 *End of document.*
