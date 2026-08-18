@@ -303,6 +303,13 @@ Everything here is a **registry, an org API, or a server endpoint**. All of it i
 
 The layer that matters most — an MCP filesystem server rooted at a developer's work directory, configured by hand, holding a GitHub token, on a laptop nobody surveyed — appears in no registry and no admin API. That comes from [the Agent](10-agent.md), and it is the one thing in this whole catalog that no competitor currently collects.
 
+For the AI-security vendor comparison and the Overlook collector plan that follows from it, see:
+
+- [AI security research index](../ai-security/00-index.md)
+- [AI security landscape and vendor comparison](../ai-security/01-landscape-and-vendor-comparison.md)
+- [End-to-end Overlook AI collector](../ai-security/02-end-to-end-overlook-ai-collector.md)
+- [AI security product plan](../ai-security/03-product-plan.md)
+
 ---
 
 *Next: [Business context](08-business-context.md)*

@@ -100,6 +100,13 @@ Crowded, well funded, consolidating fast.
 
 **The pattern:** every independent AI-security vendor of note has been acquired by a platform vendor, or is racing to be. Zenity and Noma are the significant remaining pure-plays, and both are using our vocabulary — "identity blast radius," "MCP servers," "least privilege for agents."
 
+For the Overlook-specific AI comparison and collector plan that follows from this, see:
+
+- [AI security research index](ai-security/00-index.md)
+- [AI security landscape and vendor comparison](ai-security/01-landscape-and-vendor-comparison.md)
+- [End-to-end Overlook AI collector](ai-security/02-end-to-end-overlook-ai-collector.md)
+- [AI security product plan](ai-security/03-product-plan.md)
+
 ### 2.6 Data security posture
 
 | Vendor | Relevance |
