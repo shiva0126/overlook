@@ -1,13 +1,15 @@
 # 2 — The Durable Event Buffer (NATS JetStream)
 
-**Series:** [The Edge Collector](00-index.md)
+**Series:** [The Edge Collector](00-index.md) · **LLD:** §14–16, §69, §70, §85
 
 ---
 
-> **⚠ THIS SERIES IS THE EDGE COLLECTOR AS HANDED OVER.**
-> Specifies handoff §6.1 service 2. Hard ceiling:
-> **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
-> Budget for this service: **1.0 vCPU · 4 GB RAM · 200 GB disk.**
+> **⚠ ALIGNED TO THE LOW LEVEL DESIGN.**
+> `LLD-edge-collector-v1.0` is the implementation boundary. **This document
+> carries the collector's largest open escalation** — LLD §15/§16 persist
+> each event six times, which does not fit the disk in LLD §71. See
+> [ESC-1](13-escalations.md).
+> Budget: **1.0 vCPU · 6 GB RAM · 480 GB disk** (`00 §4`).
 
 ---
 
@@ -16,9 +18,9 @@
 Hold every accepted record until something downstream has finished with it, and
 survive a crash without losing any of it.
 
-This service is what makes the PUSH acknowledgement honest. Everything else in
-the collector can be restarted, redeployed or killed; the buffer is the reason
-that costs nothing.
+This is what makes the PUSH acknowledgement honest. Everything else in the
+collector can be restarted or killed; the buffer is the reason that costs
+nothing.
 
 ---
 
@@ -29,341 +31,365 @@ that costs nothing.
     enveloped records from the Ingestion Gateway (01 §6)
 
   OUTPUTS
-    ordered delivery to Parser Engine workers (03)
-    depth and lag telemetry → the gateway's flow control (01 §4)
+    ordered delivery to worker pools (LLD §16, §17)
+    depth telemetry → flow control (01 §4), LLD §50
 
   CONSUMED BY
     03 parser engine, as a queue group
-    the Controller, for buffer health
-    replay tooling, for reprocessing after a parser fix
+    08 forwarder, via OVERLOOK_FORWARD
+    replay tooling, after a parser fix (§6.2)
 ```
 
 ---
 
-## 3. Why a broker, and why this one
+## 3. Why JetStream and not Kafka
 
-An earlier position in this doc set rejected Kafka. That reasoning still holds
-and does not apply to JetStream, which is worth stating explicitly because the
-two look like the same decision.
+LLD §85 excludes Kafka from V1 and §86 selects JetStream. Both are right, and the
+distinction is worth recording because they look like the same decision.
 
 ```
-  WHY KAFKA WAS REJECTED
-    · a JVM, a broker cluster, ZooKeeper or KRaft, and an operational
-      discipline of its own — inside a 12 vCPU appliance
-    · partition management as a customer-visible concern
-    · a second durable store alongside the journal we already needed
+  WHY KAFKA IS EXCLUDED
+    a JVM, a broker cluster, KRaft or ZooKeeper, and an operational
+    discipline of its own — inside a 12 vCPU appliance
+    partition management as a customer-visible concern
+    a second durable store alongside a journal we already need
 
   WHY JETSTREAM IS DIFFERENT
-    · one Go binary, embeddable, ~20 MB, no external dependency
-    · it IS the journal — not a queue in front of one
-    · file-backed streams with per-message fsync when asked
-    · consumer groups, replay, and per-consumer acknowledgement
-      are given rather than written
-    · backpressure signals available as first-class stream state
+    one Go binary, ~20 MB, no external dependency
+    it IS the journal — not a queue in front of one
+    file-backed streams with per-message fsync when asked
+    consumer groups, replay and per-consumer acknowledgement given
+    rather than written
+    depth available as first-class state for LLD §37's levels
 ```
 
-**The decisive point is the second one.** We were always going to write a
-durable, fsync-on-write, replayable, ordered log with per-consumer cursors and
-crash recovery. That is what JetStream is. Writing it ourselves would have been
-several thousand lines of the most dangerous code in the product, and the
-correctness bugs would surface as silent data loss under crash, which is the
-hardest class of bug to find.
-
-### 3.1 The rule that keeps it honest
-
-```
-  THERE IS EXACTLY ONE DURABLE WRITE ON THE INGRESS PATH.
-
-  JetStream IS the journal. There is no separate journal behind it.
-
-  If both existed, every record would be fsynced twice, disk write
-  bandwidth would halve, and the 1 TB ceiling would be consumed by
-  two copies of the same data.
-```
+**The decisive point is the second.** We were always going to write a durable,
+fsync-on-write, replayable, ordered log with per-consumer cursors and crash
+recovery. That is what JetStream is, and hand-writing it would be several
+thousand lines of the most dangerous code in the product — where the bugs
+surface as silent loss under crash.
 
 ---
 
-## 4. Stream design
+## 4. Streams and subjects
 
-### 4.1 Four streams, one per ingress class
-
-```
-  STREAM         SUBJECTS                      RETENTION   STORAGE
-  ───────────────────────────────────────────────────────────────
-  RAW_PULL       raw.pull.<connector_id>       6 h         file
-  RAW_PUSH       raw.push.<connector_id>       24 h        file
-  RAW_STREAM     raw.stream.<connector_id>     4 h         file
-  RAW_AGENT      raw.agent.<connector_id>      12 h        file
-```
-
-**Why per class and not per connector.** A stream per connector means 40–100
-streams on a collector, each with its own file set, index and memory overhead,
-and a management surface that grows with the catalog. A single stream for
-everything means one retention policy for classes with very different loss
-models. Four streams, with the connector in the *subject*, gives per-class
-retention and still allows per-connector filtering and replay.
-
-**Why the retentions differ.**
+LLD §14 defines the subject hierarchy and §15 three streams.
 
 ```
-  RAW_PUSH gets 24 h — the longest — because PUSH data is
-    IRRECOVERABLE. Once acked, nobody else has a copy. It earns
-    the most disk.
+  OVERLOOK_RAW          overlook.raw.aws
+                        overlook.raw.azure
+                        overlook.raw.fortigate
+                        overlook.raw.syslog
+                        overlook.raw.agent
+                        → file · retention Limits · replication 1
 
-  RAW_PULL gets 6 h — the shortest that is useful — because the
-    source API still holds it. Lose it and refetch.
+  OVERLOOK_PROCESSING   overlook.parsed
+                        overlook.normalized
+                        overlook.enriched
+                        → file  ⚠ see §5
 
-  RAW_STREAM gets 4 h despite being the highest volume, precisely
-    BECAUSE it is the highest volume. At 10,000 EPS of syslog, 4 h
-    is already 144 GB. It cannot have more.
+  OVERLOOK_FORWARD      overlook.fact
+                        overlook.forward
+                        overlook.retry
+                        → file
 
-  RAW_AGENT gets 12 h; the agent's own buffer is the second copy.
+  overlook.deadletter   parse failures (LLD §20, doc 03 §6)
+```
+
+### 4.1 Subject granularity
+
+LLD §14 keys `overlook.raw.*` by **connector type**, not connector instance.
+Extending it to `overlook.raw.<type>.<connector_id>` costs nothing and buys two
+things:
+
+```
+  · per-connector replay. The incident in §6.2 replays ONE firewall,
+    not every firewall on the collector.
+  · per-connector filtering for diagnostics without a full scan.
+
+  Retention policy stays at the STREAM level, so this does not
+  multiply configuration. It is a subject-naming change only.
 ```
 
 ### 4.2 Acknowledgement policy
 
 ```
-  PUBLISH SIDE  (gateway → JetStream)
+  PUBLISH SIDE   (gateway → OVERLOOK_RAW)
 
-    RAW_PUSH     sync publish, fsync before publish-ack
-                 ⚠ this is the contract in 01 §3.1. Nothing else
-                   in the collector depends on a durability
-                   guarantee this strict.
+    PUSH, AGENT     sync publish, fsync BEFORE publish-ack
+                    → this is the 01 §3.1 contract. Nothing else in
+                      the collector needs a guarantee this strict.
 
-    RAW_AGENT    sync publish, fsync before publish-ack
+    PULL, STREAM    async publish, batched fsync every 100 ms
+                    → PULL: the checkpoint is not advanced until the
+                      publish-ack arrives, so a crash refetches.
+                    → STREAM: already best-effort by nature of UDP.
 
-    RAW_PULL     async publish, batched fsync every 100 ms
-                 acceptable: the cursor is not advanced until the
-                 publish-ack arrives, so a crash refetches
+  CONSUME SIDE
 
-    RAW_STREAM   async publish, batched fsync every 100 ms
-                 acceptable: the data is already best-effort by
-                 the nature of UDP
-
-  CONSUME SIDE  (JetStream → parser)
-
-    explicit ack, ack-wait 30 s, max-deliver 3
-    after 3 failed deliveries → the quarantine subject (03 §6)
+    explicit ack · ack-wait 30 s · max-deliver 3
+    after 3 failed deliveries → overlook.deadletter (LLD §20)
 ```
 
-The split matters for throughput. Per-message fsync costs roughly 0.5–2 ms on
-NVMe; at 10,000 EPS that is unaffordable. Batching it for the two classes that
-can tolerate batching is what makes the budget work, and paying it in full for
-the two that cannot is what makes the guarantee real.
+Per-message fsync costs 0.5–2 ms on NVMe; at 10,000 EPS that is unaffordable.
+Batching it for the two classes that tolerate it is what makes the budget work,
+and paying it in full for the two that do not is what makes the guarantee real.
 
 ---
 
-## 5. Retention is an SLA, not a setting
+## 5. ⚠ The six-stage persistence problem
+
+**This is escalation [ESC-1](13-escalations.md) and it is the reason this
+document's disk budget carries a caveat.**
+
+LLD §16's chain writes each event to file-backed storage at RAW, PARSED,
+NORMALIZED and ENRICHED. LLD §70 retains parsed 6–24 hours.
 
 ```
-   5,000 EPS × ~1 KB  =   5 MB/s  =  18 GB/hour
-  10,000 EPS × ~1 KB  =  10 MB/s  =  36 GB/hour
-  20,000 EPS × ~1 KB  =  20 MB/s  =  72 GB/hour
+  AT LLD §71 "LARGE" — 10,000 EPS, 1 TB — AT SIX HOURS
 
-  200 GB TOTAL ACROSS FOUR STREAMS BUYS
+    RAW           1.0 KB   10 MB/s    216 GB
+    PARSED        1.2 KB   12 MB/s    259 GB
+    NORMALIZED    1.2 KB   12 MB/s    259 GB
+    ENRICHED      1.5 KB   15 MB/s    324 GB
+                                     ────────
+                                     1,058 GB
 
-    at  5,000 EPS    ~11 hours of total downstream outage
-    at 10,000 EPS    ~5.5 hours
-    at 20,000 EPS    ~2.8 hours   ← and Edge L is not rated for this
-
-  STATE IT AS A COMMITMENT:
-  "COL-mer-01 tolerates a 5 hour parser outage with zero loss on
-   PULL, PUSH and AGENT."
+  THE DISK IS 1,024 GB — before OS, SQLite, dead letter, logs or spool.
+  Sustained write load: 49 MB/s for a 10 MB/s ingest.
 ```
 
-Two consequences worth pinning down before Phase 1:
+```
+  PROPOSED — PERSIST TWICE, NOT SIX TIMES
 
-**Retention is in hours because the buffer holds raw.** Raw is the largest form
-the data ever takes — larger than parsed (which is 20% bigger still, but never
-persists here), and four orders of magnitude larger than the facts that
-eventually ship. A "7 day" default would need 6 TB.
+    OVERLOOK_RAW       file-backed, fsync before ack.
+                       The durability contract. Untouched.
 
-**Retention must be per-stream byte-limited, not only time-limited.** A time
-limit alone means an unexpected traffic spike fills the disk before the time
-window expires. Both limits, with the byte limit as the hard one.
+    in-process         parsed → normalized → enriched → fact
+                       Go channels between worker pools. LLD §5 makes
+                       this natural — it is ONE PROCESS. No
+                       serialization, no disk, no broker hop.
+
+    OVERLOOK_FORWARD   file-backed. Facts awaiting SaaS ack, plus
+                       the spool.
+
+  CRASH SAFETY IS UNCHANGED — in-flight events replay from RAW, which
+  is what RAW retention is for. LLD §16's "ACK only after successful
+  processing" is preserved by moving the RAW ack to after the FORWARD
+  publish.
+
+  RECOVERS   disk 1,058 GB → 216 GB · write I/O 49 → 10 MB/s ·
+             40,000 marshal ops/sec of CPU
+```
+
+The disk allocation in `00 §4.3` assumes this resolution. If the chain must
+stay, `OVERLOOK_PROCESSING` should be **memory-backed** — bounded, fast, lost on
+restart, and replayable from RAW.
+
+---
+
+## 6. Retention is an SLA, not a setting
 
 ```
-  RAW_STREAM   max_age 4h   max_bytes 144 GB   discard old
-  RAW_PUSH     max_age 24h  max_bytes  30 GB   discard NEW ← see below
-  RAW_PULL     max_age 6h   max_bytes  16 GB   discard old
-  RAW_AGENT    max_age 12h  max_bytes  10 GB   discard old
+   5,000 EPS × ~1 KB  =  5 MB/s  =  18 GB/hour
+  10,000 EPS × ~1 KB  = 10 MB/s  =  36 GB/hour
+
+  420 GB OF RAW BUYS
+    at  5,000 EPS   ~23 hours
+    at 10,000 EPS   ~11.6 hours
+    at 20,000 EPS   ~5.8 hours  ← and Large is not rated for this
 ```
 
-### 5.1 `discard: new` on RAW_PUSH is deliberate
+```
+  ⚠ LLD §69 SAYS raw_hours: 24 AND queue.max_disk_gb: 300.
+
+  At 10,000 EPS, 300 GB is 8.3 hours, not 24. The two are only both
+  true below ~3,500 EPS — the bottom of the Medium tier.
+  → escalation ESC-2.
+
+  PROPOSED: max_disk_gb is the only configured value. The collector
+  COMPUTES and DISPLAYS the resulting window —
+     "RAW retention: 11.6 hours at current 10,200 EPS"
+  — and alarms when it falls below a floor. LLD §35's UI already
+  shows "Estimated Buffer Remaining"; this is the same computation,
+  driving the config rather than merely reporting it.
+```
+
+### 6.1 Limits must be byte-based as well as time-based
 
 ```
-  discard OLD    when full, delete the oldest messages to make room.
-                 The publisher never knows. Data is lost silently.
+  A time limit alone means a traffic spike fills the disk before the
+  window expires. Both, with bytes as the hard limit.
 
-  discard NEW    when full, REFUSE THE PUBLISH. The publish fails,
-                 the gateway does not ack, the sender retries.
+  OVERLOOK_RAW       max_bytes 420 GB   discard OLD
+  OVERLOOK_FORWARD   max_bytes  60 GB   discard NEW  ← see below
+  deadletter         max_bytes  30 GB   max_age 7 d (LLD §70)
+```
 
-  For PUSH, silent loss is exactly the failure the fsync-before-ack
-  contract exists to prevent. Refusing loudly is the whole point:
-  it converts a data loss into a backpressure event (01 §4.1).
+```
+  discard NEW ON OVERLOOK_FORWARD IS DELIBERATE.
 
-  For the other three, discard old is correct — refetch, or it was
-  best-effort to begin with.
+  discard old  → the oldest FACTS are deleted to make room. Silent
+                 loss of the thing the customer is buying.
+  discard new  → the publish fails, privacy workers block, back
+                 pressure propagates to the gateway, and the loss
+                 becomes a visible pressure event instead.
+
+  On OVERLOOK_RAW, discard old is correct: PULL refetches and
+  STREAM was best-effort to begin with.
 ```
 
 ---
 
-## 6. Consumers and replay
+## 7. Consumers and replay
 
-### 6.1 Parser workers as a queue group
-
-```
-  one durable consumer per stream, shared by N parser workers
-
-    RAW_STREAM  →  consumer PARSE_STREAM   →  8 workers
-    RAW_PULL    →  consumer PARSE_PULL     →  2 workers
-    RAW_PUSH    →  consumer PARSE_PUSH     →  2 workers
-    RAW_AGENT   →  consumer PARSE_AGENT    →  2 workers
-
-  Workers are stateless and interchangeable. Scaling the parser is
-  adding workers to the group; JetStream distributes and tracks
-  acknowledgement per message.
-```
-
-**Ordering is per subject, not per stream.** Events from one connector arrive at
-the parser in order. Events from different connectors interleave arbitrarily,
-which is correct and is why every downstream stage keys on `event_time` rather
-than arrival order.
-
-### 6.2 Replay is the reason this is worth 200 GB
+### 7.1 Worker pools as queue groups
 
 ```
-  A parser bug produces wrong facts for CON-fortigate-dc-01 for
-  three hours. Without a buffer, the only remedy is to wait for the
-  data to recur.
+  OVERLOOK_RAW      → consumer PARSE      → LLD §17  min 2 max 16
+  overlook.parsed   → consumer NORMALIZE  →          min 2 max 12
+  overlook.normalized → consumer ENRICH   →          min 2 max 8
+  overlook.enriched → consumer FACTS      →          min 2 max 8
+  overlook.fact     → consumer PRIVACY
+  overlook.forward  → consumer FORWARD    →          min 2 max 8
+
+  (under ESC-1's resolution the middle four become in-process
+   channels with the same pool shapes and the same scaling inputs)
+
+  SCALING INPUTS (LLD §17)  queue depth · EPS · CPU · latency
+```
+
+**Ordering is per subject, not per stream.** Events from one connector reach the
+parser in order; different connectors interleave arbitrarily. That is correct,
+and it is why every downstream stage keys on `timestamp` rather than arrival
+order.
+
+### 7.2 Replay is why the disk is worth spending
+
+```
+  A parser defect produces wrong facts for one firewall for three
+  hours. Without a buffer the only remedy is waiting for the data
+  to recur — which for a quarterly batch job's traffic is 90 days.
 
   WITH IT
-    1  fix the parser, ship the content bundle
-    2  create an ephemeral consumer over
-         raw.stream.CON-fortigate-dc-01
+    1  fix the parser, load the bundle (03 §4)
+    2  ephemeral consumer over overlook.raw.fortigate.<id>
        from a start time three hours ago
     3  reprocess into a shadow fact stream
     4  diff shadow against what was emitted
     5  emit corrections to SaaS as fact revisions
 
-  This is only possible within the retention window. It is the
-  strongest practical argument for buying the 200 GB, and it should
-  be the first thing tested in the Phase gate for this service —
-  a replay path that has never been exercised does not work.
+  Only possible inside the retention window. This should be the
+  FIRST thing exercised in this module's gate — a replay path that
+  has never been run does not work.
 ```
 
 ---
 
-## 7. Considerations
+## 8. Considerations
 
-**Depth is the collector's single best health signal.** It is a leading
-indicator: it rises before latency does, before facts go stale, before anything
-is lost. The Controller's collector health page should lead with buffer depth
-per stream, not with CPU.
+**Depth is the collector's best health signal.** It is a leading indicator: it
+rises before latency does, before facts go stale, before anything is lost. LLD
+§64's dashboard shows Queue in GB — it should show depth as a *percentage of the
+configured limit*, because that is what LLD §37's levels are defined against.
 
-**Memory storage is never correct here.** JetStream offers in-memory streams,
-they are much faster, and using one would silently void the durability
-guarantee this service exists to provide. File storage on all four, asserted at
-startup, failing loudly if misconfigured.
+**File storage on OVERLOOK_RAW, asserted at startup.** JetStream offers
+memory-backed streams; they are much faster and using one silently voids the
+durability guarantee this module exists to provide. Assert and fail loudly.
 
-**Do not put the buffer on the same spindle as Local Analytics.** Analytics
-runs bursty sequential reads; the buffer needs consistent low-latency fsync.
-Where the platform allows it, separate volumes. Where it does not, analytics
-gets an I/O priority below the buffer's.
+**Do not share a spindle with the spool.** The spool (LLD §29) writes in bursts
+during an outage; RAW needs consistent low-latency fsync. Separate volumes where
+the platform allows, I/O priority where it does not.
 
-**One collector, one JetStream, no clustering.** JetStream clusters and it would
-be tempting to cluster across a customer's collectors. Do not. Collectors are
-independent by design (`../09-deployment-and-tenancy-model.md`); clustering them
-creates a shared failure domain and a network dependency between sites for no
-benefit that SaaS does not already provide.
+**One collector, one JetStream, no clustering.** JetStream clusters, and it would
+be tempting to cluster across a customer's collectors. LLD §84 correctly puts
+clustering in Phase 3. Collectors are independent by design
+(`../09-deployment-and-tenancy-model.md`); clustering them creates a shared
+failure domain and a cross-site network dependency for no benefit SaaS does not
+already provide.
 
-**Right-size `max_bytes` per deployment, not per edition.** Two Edge L
-collectors with the same specification can carry very different mixes. `COL-mer-03`
-is 97% PULL and needs almost nothing in RAW_STREAM; `COL-mer-01` is the inverse.
-A single default across the fleet wastes disk on one and starves the other.
+**Size per deployment, not per edition.** Two Large collectors with identical
+specifications carry very different mixes — `COL-mer-03` is 92% API poll and
+needs almost nothing in the syslog subjects; `COL-mer-01` is the inverse. A
+fleet-wide default wastes disk on one and starves the other.
 
 ---
 
-## 8. Failure modes
+## 9. Failure modes
 
 | Failure | Consequence | Mitigation |
 |---|---|---|
-| A second journal behind JetStream | Double fsync, half the write bandwidth, double disk | One durable write on the path — §3.1 |
-| Memory-backed stream | Durability guarantee silently void | File storage asserted at startup |
-| `discard: old` on RAW_PUSH | Acked data deleted silently under pressure | `discard: new` — §5.1 |
-| Time-only retention | Disk full during a traffic spike | Byte limit is the hard limit |
-| Retention set in days | 6 TB required, 1 TB available | Retention in hours, sized from EPS |
-| Replay never tested | The 200 GB buys nothing when needed | Replay exercised in the service's gate |
-| One stream per connector | 40–100 streams, unmanageable overhead | Four streams, connector in the subject |
-| Clustering across collectors | Shared failure domain, cross-site dependency | Independent per collector |
-| Buffer shares a spindle with analytics | fsync latency spikes, throughput collapses | Separate volume or I/O priority |
+| Six-stage file persistence | 1,058 GB at 6 h against a 1 TB disk | ESC-1 — persist twice |
+| `raw_hours` fixed at 24 | Silently becomes 8 h under load, and gets quoted in an incident | ESC-2 — derive and display |
+| Memory-backed RAW | Durability guarantee silently void | File storage asserted at startup |
+| `discard: old` on FORWARD | Facts deleted silently under pressure | `discard: new`, §6.1 |
+| Time-only retention | Disk full during a spike | Byte limit is the hard limit |
+| Replay never tested | The disk buys nothing when needed | Exercised in the module's gate |
+| Clustering across collectors | Shared failure domain, cross-site dependency | Independent per collector; LLD §84 |
+| Spool shares a spindle with RAW | fsync latency spikes; STREAM drops at the gateway | Separate volume or I/O priority |
+| Depth shown in GB not % | The operator cannot see which pressure level applies | Percentage of configured limit |
 
 ---
 
-## 9. Example: Meridian
+## 10. Example: Meridian
 
-### 9.1 Sizing COL-mer-01 versus COL-mer-03
-
-```
-  COL-mer-01     10,900 EPS · 97% STREAM · avg 1.1 KB
-
-    RAW_STREAM   4 h    max_bytes  168 GB    ← almost all of it
-    RAW_PUSH    24 h    max_bytes   14 GB
-    RAW_PULL     6 h    max_bytes    4 GB
-    RAW_AGENT    —      not deployed
-                        ─────────────────
-                                   186 GB
-
-  COL-mer-03     14,200 EPS · 92% PULL · avg 2.8 KB (structured JSON)
-
-    RAW_PULL     6 h    max_bytes  110 GB    ← inverted
-    RAW_PUSH    24 h    max_bytes   48 GB    ← GitHub webhooks
-    RAW_STREAM   4 h    max_bytes    6 GB
-    RAW_AGENT   12 h    max_bytes   20 GB
-                        ─────────────────
-                                   184 GB
-
-  SAME EDITION. SAME DISK. OPPOSITE ALLOCATION.
-  A fleet-wide default would have starved one of them.
-```
-
-Note that `COL-mer-03` carries 30% more EPS but similar bytes, because PULL
-sources arrive as structured JSON — fewer, larger, already-parseable records.
-This is the connector value-density argument
-(`../08-connector-benchmark-and-alignment.md`) appearing as a disk allocation.
-
-### 9.2 A replay, after a parser defect
+### 10.1 Two Large collectors, opposite allocations
 
 ```
-  2026-08-18 09:14   a FortiGate parser update ships. It misreads the
-                     `dstintf` field on VDOM-scoped traffic logs, so
-                     egress connections are attributed to the wrong
-                     interface.
+  COL-mer-01     10,900 EPS · 97% syslog · avg 1.1 KB
 
-  2026-08-18 12:40   an analyst notices CONNECTS_TO edges pointing
-                     at the wrong network segment.
+    overlook.raw.fortigate    max_bytes  340 GB
+    overlook.raw.syslog                   40 GB
+    overlook.raw.<push/pull>              40 GB
+                              ─────────────────
+    OVERLOOK_RAW                         420 GB → ~10.6 hours
 
-  IMPACT WINDOW      3 h 26 m · CON-fortigate-dc-01 and -02
-                     ~76 M events · ~84 GB, still inside the 4 h
-                     RAW_STREAM window WITH 34 MINUTES TO SPARE
+  COL-mer-03     14,200 EPS · 92% API poll · avg 2.8 KB structured
 
-  RECOVERY
-    12:41  parser rolled back to the previous bundle
-    12:52  fixed bundle validated against the quarantine corpus
-    13:04  ephemeral consumer created:
-             subjects  raw.stream.CON-fortigate-dc-0{1,2}
-             start     2026-08-18T09:14:00Z
-             deliver   to a shadow fact stream
-    13:31  replay complete — 76 M events reprocessed in 27 minutes
-    13:38  diff: 1,847 CONNECTS_TO relationships wrong
-    13:44  corrections emitted to SaaS as fact revisions
+    overlook.raw.aws          max_bytes  240 GB
+    overlook.raw.azure/gcp                80 GB
+    overlook.raw.agent                    60 GB
+    overlook.raw.syslog                   40 GB
+                              ─────────────────
+    OVERLOOK_RAW                         420 GB → ~4.4 hours ⚠
 
-  THIRTY-FOUR MINUTES OF MARGIN.
+  SAME EDITION. SAME DISK. COL-mer-03 GETS LESS THAN HALF THE
+  RETENTION WINDOW, because API sources arrive as larger structured
+  records.
 
-  Had RAW_STREAM been sized at 3 hours instead of 4, the data would
-  have aged out during the investigation and 1,847 wrong edges would
-  have stayed in the graph until they naturally re-observed —
-  which, for a quarterly batch job's traffic, is ninety days.
+  → COL-mer-03 needs either more disk or a shorter incident-response
+    SLA, and the difference must be known before an incident rather
+    than discovered during one.
+```
+
+### 10.2 A replay, after a parser defect
+
+```
+  09:14  a FortiGate parser update ships. It misreads `dstintf` on
+         VDOM-scoped traffic logs, so egress connections are
+         attributed to the wrong interface.
+
+  12:40  an analyst notices CONNECTS_TO edges pointing at the wrong
+         network segment.
+
+  IMPACT   3 h 26 m · two connectors · ~76 M events · ~84 GB
+           still inside COL-mer-01's ~10.6 h window, comfortably
+
+  12:41  parser rolled back to the previous bundle
+  12:52  fixed bundle validated against the dead-letter corpus
+  13:04  ephemeral consumer, subjects
+           overlook.raw.fortigate.con-fortigate-dc-0{1,2}
+           start 09:14, deliver to a shadow fact stream
+  13:31  replay complete — 76 M events in 27 minutes
+  13:38  diff: 1,847 CONNECTS_TO relationships wrong
+  13:44  corrections emitted to SaaS as fact revisions
+
+  ON COL-mer-03, WITH ITS 4.4-HOUR WINDOW, THE SAME INCIDENT
+  WOULD HAVE AGED OUT AT 13:36 — eight minutes before the diff
+  completed.
+
+  That is not a hypothetical margin. It is the argument for
+  ESC-2's derived-and-displayed retention.
 ```
 
 ---

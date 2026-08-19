@@ -1,21 +1,20 @@
 # 3 — The Parser Engine
 
-**Series:** [The Edge Collector](00-index.md)
+**Series:** [The Edge Collector](00-index.md) · **LLD:** §18, §19, §20, §83
 
 ---
 
-> **⚠ THIS SERIES IS THE EDGE COLLECTOR AS HANDED OVER.**
-> Specifies handoff §6.1 service 3. Hard ceiling:
-> **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
-> Budget for this service: **4.0 vCPU · 8 GB RAM.** The largest
-> allocation in the collector, and correctly so.
+> **⚠ ALIGNED TO THE LOW LEVEL DESIGN.**
+> `LLD-edge-collector-v1.0` is the implementation boundary. Divergences are
+> recorded in [13-escalations.md](13-escalations.md).
+> Budget: **3.5 vCPU · 8 GB RAM** — the largest CPU allocation in the
+> collector, and correctly so (`00 §4.1`).
 
 ---
 
 ## 1. Purpose
 
-Turn bytes into a structured, normalized record with named fields, or admit
-that it could not and say so loudly.
+Turn bytes into structured fields, or admit that it could not and say so loudly.
 
 This is the hot path. It is the only stage that touches every byte of every
 event; everything downstream operates on progressively less data. It is also
@@ -28,383 +27,350 @@ code here, the catalog cannot grow.
 
 ```
   INPUTS
-    enveloped raw records, from JetStream consumers (02 §6.1)
-    parser content bundles, loaded at runtime (§4)
+    enveloped raw records from OVERLOOK_RAW (02)
+    the parser registry (LLD §7 internal/parser/registry.go)
 
   OUTPUTS
-    normalized records → Enrichment Engine (04)
-    reduced records    → Local Analytics (08 §4)
-    unparsed records   → quarantine subject (§6)
-    parse telemetry    → the Controller
+    parsed events → normalization (04)
+    unparseable   → overlook.deadletter (LLD §20)
+    parse telemetry → overlook_events_parsed_total,
+                      overlook_parse_failures_total (LLD §50)
 
   CONSUMED BY
-    04 enrichment engine
-    08 local analytics
-    the auto-parser feedback loop (../autoparser/)
+    04 normalization engine
+    the auto-parser feedback loop (../autoparser/) — LLD §83
 ```
 
 ---
 
-## 3. The four stages
+## 3. The interface
 
-```
-  DETECT      what format is this?
-  PARSE       apply the parser, produce fields
-  VALIDATE    are the required fields present and well-typed?
-  NORMALIZE   map source fields onto the common schema
-```
+LLD §18 defines it:
 
-### 3.1 Detect
-
-Format detection precedes parser selection and is cheap, structural and
-content-independent.
-
-```
-  ORDER OF ATTEMPT — first match wins, all are O(first few bytes)
-
-    1  JSON            leading { or [ , balanced
-    2  CEF             "CEF:0|" prefix
-    3  LEEF            "LEEF:1.0|" or "LEEF:2.0|" prefix
-    4  syslog RFC5424  "<PRI>1 " structured header
-    5  syslog RFC3164  "<PRI>" then BSD timestamp
-    6  key=value       ≥3 unquoted k=v pairs
-    7  CSV/TSV         consistent delimiter count across a sample
-    8  XML             leading <
-    9  PLAIN           none of the above
-
-  DETECTION IS A HINT, NOT A DECISION.
-
-  A connector with a declared parser binding skips detection
-  entirely. Detection exists for unknown sources, for sources that
-  change format after an upgrade, and to notice when a bound
-  parser's assumption has stopped being true.
+```go
+type Parser interface {
+    Name() string
+    Supports(source Source, sample []byte) bool
+    Parse(ctx context.Context, raw RawEvent) ([]ParsedEvent, error)
+}
 ```
 
-### 3.2 Parser selection
+Three properties of this interface worth naming, because they constrain
+everything below:
 
 ```
-  1  CONNECTOR BINDING     CON-fortigate-dc-01 → parser fortinet.fortios.v7
-                           explicit, versioned, the normal case
+  Supports() TAKES A SAMPLE, NOT A FORMAT NAME
+    → detection and selection are the same decision, and a parser
+      can decline a record it does not recognise even when it is
+      bound to the connector. That is what makes §5's format-change
+      detection possible.
 
-  2  DETECTED FORMAT       a generic parser for the detected format,
-                           when no binding exists
+  Parse() RETURNS A SLICE
+    → one raw record may contain many events. A CloudTrail page, a
+      batched webhook, a multi-record file. The fan-out happens
+      HERE, which is why parsed volume exceeds raw volume (§6).
 
-  3  AUTO-PARSER           the L0–L5 pipeline (../autoparser/) proposes
-                           a parser from observed structure
-
-  4  QUARANTINE            none of the above succeeded — §6
+  Parse() TAKES A CONTEXT
+    → a per-record timeout is expressible. Use it (§8).
 ```
-
-**A mismatch between binding and detection is a signal, not an error.** If
-`CON-fortigate-dc-01` is bound to a FortiOS 7 parser and detection starts
-reporting JSON where it reported syslog, the firewall was upgraded. That is
-worth an alert before it is worth a parse failure.
-
-### 3.3 Parse
-
-The parser itself is **content, not code** — see §4. At runtime it is a compiled
-matcher applied to the record.
-
-```
-  PER-RECORD BUDGET AT 10,000 EPS ACROSS 8 WORKERS
-
-    8 workers × 1,250 records/sec each
-    = 800 µs per record, wall clock, per worker
-    of which parsing must fit in ~300 µs
-
-  That budget is generous for a grok pattern and tight for a
-  chain of unanchored regexes. It is the reason for §7's rule
-  about anchoring.
-```
-
-### 3.4 Validate and normalize
-
-```
-  VALIDATE     required fields present · types coercible ·
-               timestamp parseable and within a sane window ·
-               no field exceeding its size cap
-
-  NORMALIZE    source field  →  common schema field
-
-               FortiGate  srcip      →  source.ip
-                          dstip      →  destination.ip
-                          srcintf    →  source.interface
-                          action     →  event.action   (mapped values)
-                          devname    →  observer.name
-
-               CrowdStrike LocalIP    →  source.ip
-                           ComputerName → host.name
-                           UserName   →  user.name
-
-  Two sources, one schema. Everything downstream reads
-  source.ip and neither knows nor cares which product produced it.
-```
-
-**The common schema is the collector's most load-bearing contract.** It is what
-lets the Fact Engine extract a relationship without a per-source branch. It
-belongs in `contracts/` as a specification file rather than in prose, and it is
-the second thing to write after the Security Fact schema.
 
 ---
 
-## 4. Parsers are content, not code
+## 4. Parser selection
 
-This is the design decision that determines whether the collector can carry a
-hundred connectors.
+LLD §19:
+
+```
+  Incoming Event
+       │
+       ├── connector has a configured parser  →  use it
+       │
+       └── no parser  →  format detector
+                           JSON · CEF · Syslog
+                                 ↓
+                          Generic Parser
+```
+
+### 4.1 Detection
+
+Cheap, structural, content-independent. First match wins, all decided on the
+first few bytes.
+
+```
+  1  JSON            leading { or [ , balanced
+  2  CEF             "CEF:0|" prefix
+  3  LEEF            "LEEF:1.0|" or "LEEF:2.0|"
+  4  syslog RFC5424  "<PRI>1 " structured header
+  5  syslog RFC3164  "<PRI>" then BSD timestamp
+  6  key=value       ≥3 unquoted k=v pairs
+  7  CSV/TSV         consistent delimiter count across a sample
+  8  XML             leading <
+  9  PLAIN           none of the above
+```
+
+### 4.2 A binding/detection mismatch is a signal, not an error
+
+**PROPOSED — the LLD's flow treats detection as a fallback only.**
+
+```
+  If con-fortigate-dc-02 is bound to a FortiOS 7 parser and detection
+  starts reporting JSON where it reported syslog for eleven months,
+  THE FIREWALL WAS UPGRADED.
+
+  That is worth an alarm before it is worth 3.1 million dead-letter
+  records. Running detection continuously on a sampled 1-in-1000 of
+  bound connectors costs almost nothing and turns a silent
+  catastrophe into a page. Worked example in §10.2.
+```
+
+---
+
+## 5. Parsers are content, not code
+
+The decision that determines whether the collector can carry a hundred
+connectors. LLD §7 puts `parsers/` beside `schemas/` at the repository root
+rather than inside `internal/`, which implies this — it is worth making explicit.
 
 ```
   IF A NEW SOURCE MEANS NEW CODE
-    new source → code change → rebuild → re-run the handoff §13
-    gates → redeploy the fleet.
-    Connector #40 costs what connector #1 cost.
+    new source → code change → rebuild → re-run every gate →
+    redeploy the fleet. Connector #40 costs what connector #1 cost.
 
   IF A NEW SOURCE MEANS NEW CONTENT
-    new source → a parser definition in a signed bundle → loaded
-    at runtime → no rebuild, no re-qualification of the binary.
-    The binary qualified at Phase 12 is the binary at connector #100.
+    new source → a parser definition in a signed bundle → loaded at
+    runtime → no rebuild. The binary qualified in the performance
+    gate is the binary at connector #100.
 ```
 
-### 4.1 The bundle
+### 5.1 The bundle
 
 ```
-  parsers-2026.08.18.bundle          signed, versioned, immutable
+  parsers-2026.08.18.bundle              signed (LLD §74, §75)
     ├── fortinet.fortios.v7.yaml
     ├── crowdstrike.falcon.v3.yaml
     ├── scalefusion.audit.v1.yaml
     ├── generic.cef.yaml
     ├── generic.rfc5424.yaml
-    └── manifest.json                versions, hashes, schema version
+    └── manifest.json
 
   LOADING
-    · fetched from SaaS or side-loaded for air-gapped sites
-    · signature verified before load
-    · loaded into a NEW parser table; the old table serves traffic
-      until the new one is ready, then an atomic swap
-    · ⚠ NO PROCESS RESTART. A restart drains the JetStream consumer
-      and, per 01 §9.2, restarts are what cause STREAM loss.
+    · signature verified before load (LLD §75 signed updates)
+    · loaded into a NEW registry; the old one serves traffic until
+      the new one is ready, then an ATOMIC SWAP with drain
+    · ⚠ NO PROCESS RESTART
 ```
 
-**Hot reload is not a convenience feature here.** Because the collector's only
-uncontrolled loss class is STREAM, and because STREAM loss happens whenever the
-parser stops consuming, every avoided restart is avoided data loss. Parser
-updates will be frequent. They must not cost packets.
+```
+  HOT RELOAD IS NOT A CONVENIENCE HERE.
 
-### 4.2 Where the auto-parser fits
+  In LLD §5's monolith, a restart stops ingestion, not just parsing.
+  The collector's only uncontrolled loss class is STREAM (01 §4.3),
+  and STREAM loss happens on every restart. Parser updates will be
+  frequent. They must not cost packets.
+
+  Managed by the Parser Manager in the control plane (LLD §4.2,
+  doc 10).
+```
+
+### 5.2 Where the auto-parser fits
+
+LLD §83 places the auto-parser in Phase 2. Until then, unknown sources fall to
+generic parsers and dead-letter.
 
 ```
-  A source with no binding and no matching generic parser goes to
-  the auto-parser rather than straight to quarantine.
-
-    L0–L5 (../autoparser/) observes structure across many records,
-    clusters them with Drain, and PROPOSES a parser definition.
+  WHEN IT ARRIVES (../autoparser/)
+    L0–L5 observes structure across many records, clusters with
+    Drain, and PROPOSES a parser definition.
 
     PROPOSE  →  CONFIRM  →  FREEZE
 
-    proposed   used, flagged, facts carry reduced confidence
-    confirmed  a human accepted it in the Controller
-    frozen     promoted into the next content bundle
+    proposed   used, flagged, facts carry reduced confidence (06 §7)
+    confirmed  a human accepted it in the UI (LLD §63 "Parsing")
+    frozen     promoted into the next signed bundle
 
-  ⚠ PROPOSED — the auto-parser is escalation E9; it is not named in
-    the handoff. It is what makes the MSSP catalog tractable, since
-    every customer has three sources nobody has ever seen.
+  It is what makes an MSSP catalog tractable, because every customer
+  has three sources nobody has ever seen.
 ```
 
 ---
 
-## 5. Parsing makes the data bigger
+## 6. Parsing makes the data bigger
 
-A sizing fact that is easy to get backwards.
+A sizing fact that is easy to get backwards, and one of the inputs to ESC-1.
 
 ```
-  raw syslog line                              1,104 bytes
-  parsed, normalized, JSON, named fields       1,330 bytes    +20%
+  raw syslog line                          1,104 bytes
+  parsed, named fields, JSON               1,330 bytes    +20%
 
-  IT NEVER PERSISTS IN THIS FORM.
+  AND Parse() RETURNS A SLICE — one CloudTrail page of 50 records
+  becomes 50 parsed events from one raw record. For API sources the
+  multiplier is on COUNT as well as size.
 
-  The parsed record exists only in flight, between the parser and
-  the Fact Engine. Nothing writes it to disk. If it ever needs to
-  be persisted — for debugging, for a replay buffer, for analytics
-  — the sizing in 00 §4.3 is wrong and must be redone.
-
-  Local Analytics receives a REDUCED projection (08 §4), not this.
+  UNDER LLD §15 THIS IS PERSISTED TO DISK. Under ESC-1's proposed
+  resolution it exists only in flight, between worker pools, and
+  never touches storage.
 ```
 
 ---
 
-## 6. Quarantine — never drop, always account
+## 7. Dead-letter — never drop, always account
+
+LLD §20 is explicit that parser failures must not drop events.
 
 ```
-  A RECORD REACHES QUARANTINE WHEN
+  A RECORD DEAD-LETTERS WHEN
     · detection returned PLAIN and no parser matched
-    · a bound parser threw or produced no required field
-    · validation failed — unparseable timestamp, type mismatch
+    · a bound parser threw or returned no usable fields
     · JetStream max-deliver was exhausted (02 §4.2)
+    · the per-record parse timeout expired (§8)
 
-  WHAT HAPPENS
-    · published to  quarantine.<connector_id>
-    · retained 7 days, capped at 2 GB per collector
-    · sampled — the first 1,000 distinct shapes per connector per
-      day, not every record. A source emitting 40,000 EPS of an
-      unparseable format must not fill the disk with evidence
-      of a single fact.
-    · counted:  parse_failed_total{connector,reason}
-    · surfaced in the Controller as a per-connector parse rate
+  RECORD (LLD §20)
+    { event_id, connector, parser, reason, attempts,
+      first_seen, last_attempt }
 
-  WHAT NEVER HAPPENS
-    · silent discard
-    · a parse failure shortening the coverage window ← see below
+  PROPOSED ADDITIONS
+    · SAMPLING. The first 1,000 distinct shapes per connector per
+      day, not every record. A source emitting 3 EPS of an
+      unparseable format must not fill 30 GB with evidence of one
+      fact. LLD §70 gives dead-letter 7 days; without sampling that
+      budget is consumed in hours.
+    · a payload EXCERPT (200 bytes) rather than the full payload,
+      so the dead-letter store is not a shadow copy of raw.
 ```
 
 ```
-  PARSE FAILURE IS NOT A COVERAGE GAP.
+  ⚠ PARSE FAILURE IS NOT A COVERAGE GAP.
 
   A gap means WE DID NOT SEE THE DATA. A parse failure means we saw
-  it and could not read it. The data is in quarantine and will be
-  reprocessed when the parser is fixed (02 §6.2).
+  it and could not read it — the record is in dead-letter and will
+  be reprocessed when the parser is fixed (02 §7.2).
 
-  Conflating the two makes a parser bug look like a collection
-  outage, which sends the investigation to the wrong team.
+  Conflating them makes a parser bug look like a collection outage
+  and sends the investigation to the wrong team. Separate counters,
+  separate UI treatment.
 ```
 
 ---
 
-## 7. Considerations
+## 8. Considerations
 
-**Anchor every pattern.** An unanchored regex over a 4 KB log line backtracks,
-and a pathological input turns 300 µs into 300 ms. At 1,250 records/sec/worker
-that is a stalled worker, a growing buffer, and eventually STREAM drops at the
-gateway. Anchoring, possessive quantifiers, and a per-record parse timeout with
-the record routed to quarantine on expiry.
+**Anchor every pattern, and use the context timeout.** An unanchored regex over a
+4 KB log line backtracks, and a pathological input turns 300 µs into 300 ms. At
+LLD §17's 16 parser workers that is a stalled pool, a growing buffer, and
+eventually STREAM drops at the gateway. Anchoring, possessive quantifiers, and a
+per-record deadline on the `ctx` that LLD §18 already passes.
 
-**The parser table swap must be atomic and the old table must drain.**
-In-flight records were matched against the old table; completing them under the
-new one produces records that are half one schema and half another.
+**Per-record CPU budget.** At 10,000 EPS across 8 active workers that is 1,250
+records/sec/worker — 800 µs wall clock, of which parsing must fit in ~300 µs.
+Generous for a grok pattern, tight for a chain of unanchored regexes.
 
-**Do not parse what will be filtered.** If the noise policy (`05 §5`) drops 70%
-of firewall traffic logs, evaluate the drop predicate on the raw line where the
-predicate allows it. Parsing then discarding is the single largest waste
-available in the collector, and it is spending the most expensive budget in the
-box.
+**The registry swap must be atomic and the old registry must drain.** In-flight
+records were matched against the old registry; completing them under the new one
+produces half-old, half-new field sets.
 
-**One worker pool per stream, not one shared pool.** A slow parser on a PULL
-source with 2 MB API responses must not occupy workers that STREAM needs. The
-consumer split in `02 §6.1` exists for this; honour it with separate pools.
+**Do not parse what will be discarded.** If the noise policy (`06 §5`) drops 70%
+of firewall traffic logs, evaluate the drop predicate on the raw line where it
+can be. Parsing and then discarding spends the collector's most expensive budget
+on data that was never going to be used.
+
+**Recover at the worker boundary.** LLD §5's monolith means a parser panic on
+malformed input kills the collector. `recover()` per worker, dead-letter the
+record, continue. This is not optional.
 
 **Version parsers, never mutate them.** `fortinet.fortios.v7` and
-`fortinet.fortios.v7.1` coexist. Facts carry the parser version that produced
-them, which is what makes the replay diff in `02 §9.2` meaningful — you can tell
-which facts came from the defective version.
+`fortinet.fortios.v71` coexist, and parsed events carry the parser version. That
+is what makes the replay diff in `02 §10.2` meaningful — you can tell which facts
+came from the defective version.
 
 **Timestamp extraction is where most silent wrongness lives.** Two-digit years,
-missing timezones, local time from a device in another region, and the
-RFC3164 format that omits the year entirely. Every parser declares its timestamp
-strategy explicitly, and a record whose extracted `event_time` is more than 24 h
-from `received_at` is flagged rather than accepted quietly.
+missing timezones, local time from a device in another region, and RFC3164 which
+omits the year entirely. Every parser declares its timestamp strategy explicitly,
+and a record whose extracted time is more than 24 h from `received_at` is flagged
+rather than accepted quietly.
 
 ---
 
-## 8. Failure modes
+## 9. Failure modes
 
 | Failure | Consequence | Mitigation |
 |---|---|---|
-| Unanchored regex, pathological input | Worker stalls, buffer fills, STREAM drops at the gateway | Anchoring + per-record timeout → quarantine |
-| Parser update requires restart | Consumer drains, STREAM data lost on every content update | Atomic hot swap, §4.1 |
-| Parsers compiled into the binary | Every connector is a rebuild and a re-qualification | Content bundles, §4 |
-| Parse-then-filter | Largest budget spent on discarded data | Evaluate drop predicates pre-parse where possible |
-| Shared worker pool | A slow PULL source starves STREAM | Pool per stream |
-| Silent discard of unparsed | Data loss looks like a quiet source | Quarantine, counted and sampled |
-| Parse failure shortens coverage window | Parser bug reads as a collection outage | Distinct counters, §6 |
-| Non-atomic table swap | Mixed-schema records | Swap with drain |
-| Timestamp misparsed | Facts land at the wrong time; ordering wrong | Explicit strategy per parser + 24 h skew flag |
-| Quarantine unsampled | 2 GB filled by one source in minutes | 1,000 distinct shapes/connector/day |
+| Unanchored regex, pathological input | Worker pool stalls, buffer fills, STREAM drops upstream | Anchoring + per-record `ctx` deadline |
+| Panic on malformed input | Whole collector dies (monolith) | `recover()` per worker → dead-letter |
+| Parser update requires restart | STREAM data lost on every content update | Atomic hot swap, §5.1 |
+| Parsers compiled into the binary | Every connector is a rebuild and a re-qualification | Signed content bundles, §5 |
+| Parse-then-discard | Largest budget spent on data that is thrown away | Pre-parse drop predicates |
+| Dead-letter unsampled | 30 GB filled in hours by one source | 1,000 shapes/connector/day + excerpts |
+| Parse failure counted as a coverage gap | Parser bug reads as a collection outage | Separate counters, §7 |
+| Non-atomic registry swap | Mixed field sets in one batch | Swap with drain |
+| Detection never run on bound connectors | A device upgrade silently dead-letters everything | Sampled continuous detection, §4.2 |
+| Timestamp misparsed | Facts land at the wrong time; ordering wrong | Explicit strategy + 24 h skew flag |
 
 ---
 
-## 9. Example: Meridian
+## 10. Example: Meridian
 
-### 9.1 The parse profile of COL-mer-01
+### 10.1 The parse profile of COL-mer-01
 
 ```
   CONNECTOR              FORMAT        PARSER                  RATE
   ─────────────────────────────────────────────────────────────────
-  CON-fortigate-dc-01    RFC3164 KV    fortinet.fortios.v7    6,200
-  CON-fortigate-dc-02    RFC3164 KV    fortinet.fortios.v7    3,100
-  CON-paloalto-perim     CSV           paloalto.panos.v11     1,400
-  CON-nsx-dfw            JSON          vmware.nsx.v4            180
-  CON-fortimanager       JSON          fortinet.fortimanager     ~0
+  con-fortigate-dc-01    RFC3164 KV    fortinet.fortios.v7    6,200
+  con-fortigate-dc-02    RFC3164 KV    fortinet.fortios.v7    3,100
+  con-paloalto-perim     CSV           paloalto.panos.v11     1,400
+  con-nsx-dfw            JSON          vmware.nsx.v4            180
+  con-fortimanager       JSON          fortinet.fortimanager     ~0
 
-  PARSE SUCCESS RATE                                        99.97%
-  QUARANTINED                                          ~3.3 EPS
+  overlook_events_parsed_total       99.97%
+  overlook_parse_failures_total       ~3.3 EPS
 
-  Of the quarantined, 91% is a single shape: FortiGate
-  `type=event subtype=wad` records emitted by a WAN-optimisation
-  module nobody enabled deliberately. It has been the same 3 EPS
-  for six weeks.
+  91% of dead-lettered records are ONE shape: FortiGate
+  `type=event subtype=wad` from a WAN-optimisation module nobody
+  enabled deliberately. Same 3 EPS for six weeks.
 
-  → the right response is a noise-policy drop rule, not a parser.
-    Writing a parser for it would produce 285,000 correctly parsed
-    records per day describing a feature that is not in use.
+  → the right response is a noise drop rule, not a parser. Writing
+    a parser would produce 285,000 correctly parsed records per day
+    describing a feature that is not in use.
 ```
 
-### 9.2 A format change, caught by detection
+### 10.2 A format change, caught by sampled detection
 
 ```
-  2026-08-18 02:10   FortiOS upgraded 7.2 → 7.4 on dc-02 during a
-                     maintenance window.
+  02:10  FortiOS upgraded 7.2 → 7.4 on dc-02 in a maintenance window.
 
-  02:11  detection on CON-fortigate-dc-02 begins reporting JSON
-         where it has reported RFC3164 for eleven months
+  02:11  sampled detection on con-fortigate-dc-02 reports JSON where
+         it has reported RFC3164 for eleven months
 
   02:11  BINDING/DETECTION MISMATCH raised
-           bound     fortinet.fortios.v7   (expects RFC3164 KV)
+           bound     fortinet.fortios.v7   expects RFC3164 KV
            detected  JSON
-           → the bound parser starts failing; records quarantine
+         UI: "con-fortigate-dc-02 · parse rate 99.9% → 4.1% ·
+              format changed · likely device upgrade"
 
-  02:11  Controller alarm:
-           "CON-fortigate-dc-02 · parse rate 99.9% → 4.1% ·
-            format changed · likely device upgrade"
-
-  02:14  the collector falls back to generic.json, which extracts
-         enough for entity and relationship extraction to continue
-         at REDUCED CONFIDENCE. Facts still flow.
+  02:14  fallback to generic.json. It maps src_ip, dst_ip and action
+         by convention, so entity and relationship extraction
+         continues AT REDUCED CONFIDENCE. Facts still flow.
 
   09:30  fortinet.fortios.v74 bundled, hot-loaded, no restart
   09:31  parse rate back to 99.96%
-  09:40  the 02:11–09:31 window replayed from RAW_STREAM
-         ⚠ 4 h retention — only 05:31 onward survived.
-           3 h 20 m of full-fidelity data was lost to the buffer
-           window, though the reduced-confidence facts from the
-           JSON fallback remain.
+  09:40  replay from OVERLOOK_RAW
 
-  THE LESSON THAT WENT INTO THE RUNBOOK
-    a binding/detection mismatch is a PAGE, not a ticket. The clock
-    that matters is RAW_STREAM retention, and it is four hours.
-```
+  ⚠ COL-mer-01's window is ~10.6 hours, so the full 7 h 20 m was
+    recoverable. On COL-mer-03 (4.4 h — see 02 §10.1) it would not
+    have been.
 
-### 9.3 What the fallback saved
-
-```
-  WITHOUT generic.json FALLBACK
-    7 h 20 m of dc-02 entirely unparsed
-    → coverage window for CON-fortigate-dc-02 collapses
-    → SaaS correctly refuses to assert anything about that
-      segment for the period
-    → 14 attack paths through the dc-02 segment become
-      UNKNOWN rather than absent — which is right, but useless
+  WITHOUT THE FALLBACK
+    7 h 20 m entirely unparsed → 14 attack paths through the dc-02
+    segment become UNKNOWN rather than absent. Correct, but useless.
 
   WITH IT
-    entity and relationship extraction continued from JSON
-    field names that generic.json could map by convention
-    (src_ip, dst_ip, action were recognisable)
-    → 84% of the relationships still extracted
-    → confidence 0.94 → 0.61, visible on every fact
-    → the paths stayed visible, marked lower confidence
+    84% of relationships still extracted, confidence 0.94 → 0.61,
+    visible on every fact.
 
   A degraded parser that says so beats no parser. It also beats a
-  confident parser that is wrong, which is what would have happened
+  confident parser that is wrong — which is what would have happened
   had the v7 parser silently coerced JSON into its expected fields.
 ```
 
 ---
 
-*Next: [Enrichment Engine](04-enrichment-engine.md)*
+*Next: [Normalization Engine](04-normalization-engine.md)*

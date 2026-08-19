@@ -2,29 +2,35 @@
 
 **Version:** 0.2
 **Date:** 2026-08-17
-**Status:** Aligned to the Engineering Handoff. Nothing here is implemented.
+**Status:** Aligned to the Low Level Design. Nothing here is implemented.
 
 ---
 
 > ## ⚠ AUTHORITY
 >
-> **`Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
-> boundary and takes precedence over every document in this set.**
+> **`LLD-edge-collector-v1.0.md` is the implementation boundary and takes
+> precedence over every document in this set.** It supersedes
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` for collector internals;
+> the handoff still governs the work cycle and gate discipline (§38).
 >
 > This document and its companions are design exploration. Where they
-> disagree with the handoff, the handoff wins. Where they extend it, the
-> extension is marked **PROPOSED EXTENSION** and requires review under
-> handoff §25.3 / §35.1 before it is built.
+> disagree with the LLD, the LLD wins. Where they extend it, the extension
+> is marked **PROPOSED EXTENSION**.
 >
-> **What the handoff fixes:**
-> - the component is the **Edge Collector**, not an "Edge Node" or appliance
-> - hard ceiling **12 vCPU / 64 GB / 1 TB**, scale out not up (§10.3)
-> - **Security Fact v1** is the edge↔SaaS contract (§5)
-> - scope boundary: collector = ingest→fact; **PostgreSQL, ClickHouse,
->   TrustGraph, correlation, risk and attack paths are SaaS** (§3.1)
-> - phased build with stop/go gates (§38)
+> **What the LLD fixes:**
+> - a **modular monolith** — `overlook-collector` + `nats-server` +
+>   `overlook-updater`, not one process per module (LLD §5)
+> - **NATS JetStream** as the durable buffer, **SQLite** as local state,
+>   **no Redis** in V1 (LLD §14–16, §40, §41, §86)
+> - hard ceiling **12 vCPU / 64 GB / 1 TB**, scale out not up (LLD §71)
+> - the central object is **Security Fact + Entity + Relationship**,
+>   not the raw log (LLD §88)
+> - three planes: **data, control, response** (LLD §4)
+> - scope boundary: **ClickHouse, Postgres, the graph, correlation, risk
+>   and attack paths are SaaS** (LLD §76)
 >
-> **Open escalations raised by this alignment** are listed in §41.
+> **The component-by-component specification is `edge-collector/`.**
+> **Open escalations** are in `edge-collector/13-escalations.md`.
 
 ---
 
@@ -3015,11 +3021,41 @@ An honest pre-mortem. Each of these has killed a comparable product.
 
 ## 38. Build model — phased, with stop/go gates
 
-**Normative, per the Engineering Handoff §26–§28 and §33.**
+**Normative. The LLD sets the feature scope; the handoff sets the gate discipline.**
 
-Earlier drafts of this document argued for parallel tracks with no phases. **The handoff supersedes that.** The build is sequential, gated, and each phase has an explicit exit criterion. The rationale is sound: the lower-level pipeline must be stable before higher subsystems are built on it.
+The two are different granularities and both apply:
+
+```
+  LLD §82  MVP        collector identity · mTLS · connector framework ·
+                      AWS + generic REST + syslog · NATS JetStream ·
+                      parser framework · normalization · Security Fact ·
+                      privacy filtering · zstd · encrypted forwarding ·
+                      SQLite · health API · basic React UI
+
+  LLD §83  PHASE 2    auto parser · advanced enrichment · dead-letter UI ·
+                      dynamic worker scaling · agent gateway · vault
+                      improvements · certificate auto-rotation ·
+                      advanced flow control
+
+  LLD §84  PHASE 3    response engine · cloud + endpoint response ·
+                      local analytics · advanced graph extraction ·
+                      OT collectors · HA · clustering
+
+  LLD §85  NOT IN V1  Kafka · Kubernetes · Redis cluster · Elasticsearch ·
+                      ClickHouse/Postgres clusters · large ML models ·
+                      full SIEM correlation · 20+ microservices
+
+  The handoff's twenty phases below are the WORK BREAKDOWN AND EXIT
+  GATES for delivering that scope. Phases 0–11 are LLD MVP; 12–13 are
+  the agent and response groundwork LLD §83/§84 completes.
+```
 
 > *"DO NOT BUILD THE WHOLE COLLECTOR AT ONCE."* — handoff §37
+> *"Do not create separate operating-system processes for every module
+> during the initial versions."* — LLD §5
+
+
+Earlier drafts of this document argued for parallel tracks with no phases. **The handoff supersedes that.** The build is sequential, gated, and each phase has an explicit exit criterion. The rationale is sound: the lower-level pipeline must be stable before higher subsystems are built on it.
 
 ### 38.1 The mandatory work cycle for every feature
 
@@ -3184,73 +3220,57 @@ Unchanged, and now positioned correctly: **all five are SaaS-side outputs** comp
 
 ---
 
-## 41. Open escalations raised by this alignment
+## 41. Open escalations
 
-Every item below requires review under handoff §25.3 or §35.1 **before** it is built. They are recorded here rather than resolved unilaterally.
+**Moved.** The current, LLD-aligned escalations live in
+[`edge-collector/13-escalations.md`](edge-collector/13-escalations.md), with the
+arithmetic attached. Summary:
+
+| ID | Severity | Subject | LLD |
+|---|---|---|---|
+| ESC-1 | **CRITICAL** | Six-stage persistence exceeds the disk (1,058 GB against 1 TB) | §15, §16, §70 |
+| ESC-2 | **HIGH** | `raw_hours: 24` and `max_disk_gb: 300` cannot both hold above ~3,500 EPS | §69, §70, §71 |
+| ESC-3 | **HIGH** | Unkeyed hashing is not a privacy control, and there is no way back | §26, §27 |
+| ESC-4 | **MEDIUM** | Per-event facts, and a `risk_score` the collector cannot compute | §23 |
+| ESC-5 | **MEDIUM** | Coverage windows absent — a broken connector improves the score | §72 |
+
+### 41.1 How the earlier escalations resolved
+
+The nine escalations raised against handoff v1.1 were largely settled by the LLD.
 
 ```
-  E1  IS THE SECURITY FACT PLAINTEXT OR TOKENIZED?          CRITICAL
-      Handoff §9 shows subject.id = "john@example.com" and
-      hostname = "laptop-221" in clear. Our entire differentiation
-      (§2.3, "residency is not blindness") requires HMAC tokens with
-      a customer-held key.
-      · plaintext  → simpler collector, SaaS-side global resolution,
-                     conventional, ships faster
-      · tokenized  → the only claim that survived the competitive
-                     survey, and it forces resolution and closure
-                     onto the collector
-      Nearly every escalation below follows from this one.
+  E1  plaintext vs tokenized      → OPEN, sharpened. Now ESC-3: the LLD
+                                    specifies HASHING, which is neither
+                                    plaintext nor tokenization and has
+                                    the weaknesses of both.
 
-  E2  FACT GRANULARITY: PER EVENT OR PER RELATIONSHIP?      CRITICAL
-      Handoff §9 has event_id/timestamp/received_at — one fact per
-      event. Our design merges N observations into one fact with
-      first_seen, last_seen and observation_count.
-      Consequence: at 5K EPS their model emits 5K facts/second;
-      ours emits ~2,900/day from 2.2 TB. This is the 200,000:1
-      reduction, and it does not exist in the handoff schema.
+  E2  per-event vs per-relation   → PARTLY RESOLVED. LLD §25's
+                                    Relationship carries first_seen,
+                                    last_seen and confidence — correct.
+                                    Only §23's Security Fact remains
+                                    per-event. Now ESC-4a.
 
-  E3  COVERAGE WINDOWS AND RETRACTION                       HIGH
-      The handoff has no mechanism by which SaaS may safely delete
-      a fact. Without one, a broken connector silently resolves
-      findings and the exposure score improves while nothing
-      changed. PROPOSED: add a coverage_window object emitted on
-      complete enumeration.
+  E3  coverage windows            → OPEN. Now ESC-5.
 
-  E4  WHERE DOES PERMISSION CLOSURE RUN?                    HIGH
-      Not in the collector's scope list (§3.1); SaaS owns risk and
-      attack paths. But closure needs raw IAM policy documents.
-      Either they are uploaded — contradicting "send only
-      normalized facts" (§2) — or closure runs on the collector as
-      a CPU-heavy workload not budgeted within 12 vCPU.
+  E4  where permission closure    → RESOLVED. LLD §76 puts the graph and
+      runs                          correlation in SaaS. Conceded.
 
-  E5  "risk": 72 IN THE SECURITY FACT                       MEDIUM
-      A collector cannot compute risk. Risk is a function of the
-      graph, crown jewels and path reachability, none of which
-      exist at the edge. Either the field is a source-supplied
-      severity mislabelled, or the boundary is wrong.
+  E5  risk in a collector fact    → OPEN. Now ESC-4b.
 
-  E6  LOCAL ANALYTICS DATASET vs THE 1 TB CEILING           MEDIUM
-      Parquet + DuckDB (04 §28.1) does not fit alongside a
-      600-700 GB spool. Drop it, shrink it to 7 days, or place it
-      on an add-on volume outside the ceiling.
+  E6  local analytics vs 1 TB     → RESOLVED. LLD §84 defers local
+                                    analytics to Phase 3.
 
-  E7  EVIDENCE RETENTION vs THE 1 TB CEILING                MEDIUM
-      90-day evidence at ~3 TB does not fit. PROPOSED: 14-day
-      default, hash plus bounded excerpt rather than full artifact.
+  E7  evidence retention          → RESOLVED. LLD §70 sets dead letter at
+                                    7 days and logs at 30. Needs sampling
+                                    (edge-collector/03 §7), not escalation.
 
-  E8  MULTI-COLLECTOR ENTITY RESOLUTION                     HIGH
-      §19.3 says SaaS performs global correlation and collectors
-      need no east-west communication. That works only if facts are
-      plaintext (E1). With tokens, SaaS sees two different tokens
-      for the same person and cannot join them — which is why we
-      specified a Resolution Directory. Scale-out makes this worse.
+  E8  multi-collector resolution  → RESOLVED IN PRINCIPLE, dependent on
+                                    ESC-3. See edge-collector/12 §5:
+                                    99.8% of Meridian's cross-collector
+                                    resolution is a byte-equality join
+                                    IF tokens are keyed and deterministic.
 
-  E9  AUTO-PARSER                                           MEDIUM
-      Handoff §8 is a hand-written parser plugin framework. There
-      is no template mining, derivation or proposal workflow. Our
-      autoparser/ series proposes one. For an MSSP onboarding
-      customer devices nobody wrote a parser for, this is the
-      difference between scaling and bespoke integration work.
+  E9  auto-parser absent          → RESOLVED. LLD §83 puts it in Phase 2.
 ```
 
 ---

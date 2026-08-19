@@ -21,6 +21,16 @@ The core design principle is:
 
 ---
 
+> **⚠ SUPERSEDED — HISTORICAL RECORD ONLY.**
+> This is the original architecture brief. It is retained because the
+> escalations in `edge-collector/13-escalations.md` reference the
+> reasoning in it. It is **not** a source of truth for anything.
+> Current authority: `LLD-edge-collector-v1.0.md`, then
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1`.
+> Do not build from this document.
+
+---
+
 # 2. High-Level Architecture
 
 ```text

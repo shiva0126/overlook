@@ -1,344 +1,354 @@
-# Overlook — The Edge Collector, Service by Service
+# Overlook — The Edge Collector, Component by Component
 
-**Version:** 1.0
+**Version:** 2.0
 **Date:** 2026-08-18
-**Parent:** `Overlook_Edge_Collector_Engineering_Handoff_v1.1` §6.1
+**Parent:** `../LLD-edge-collector-v1.0.md`
 **Status:** Architecture. No implementation.
 
 ---
 
-> **⚠ THIS SERIES IS THE EDGE COLLECTOR AS HANDED OVER.**
-> It specifies the seven services of handoff §6.1, as elaborated in the
-> service architecture of 2026-08-18. Where this series adds something the
-> handoff does not state, it is marked **PROPOSED** and carries the reason.
+> **⚠ ALIGNED TO THE LOW LEVEL DESIGN.**
+> `LLD-edge-collector-v1.0` is the implementation boundary and takes
+> precedence over this document and over
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1`, which it supersedes
+> for collector internals. Where this series differs, it is recorded as an
+> escalation in [13-escalations.md](13-escalations.md), not resolved here.
 > Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
-> Open escalations: `../01-system-design.md` §41.
 
 ---
 
-## 1. Why this series exists
+## 1. What this series is
 
-The handoff answers *how to run the work* — twenty phases, stop/go gates,
-evidence, ceilings. The rest of `docs/` answers *how it works and why*. Neither
-answers **what exactly to build**, and that is the document an engineer sits
-down with.
-
-This series is that layer for the collector. One document per service, each
-specifying inputs, outputs, mechanics, resource budget, and the ways it fails.
+The LLD (88 sections) specifies the collector. This series explains **how each
+component works and how it fails** — the reasoning underneath the specification,
+at the level someone writing the code needs.
 
 ```
-  LAYER 1   how to run the work        → the handoff
-  LAYER 2   how it works and why       → the rest of docs/
-  LAYER 3   what exactly to build      → THIS SERIES
+  LLD §1–88               the specification. Authoritative.
+  THIS SERIES             mechanics, budgets, failure modes, worked examples
+  13-escalations.md       the four places we think the LLD needs a decision
 ```
+
+Nothing here overrides the LLD. Where this series proposes something the LLD
+does not state, it is marked **PROPOSED** and carries its reasoning.
 
 ---
 
-## 2. Reconciling the three diagrams
+## 2. The three planes
 
-The service architecture arrived as three diagrams that disagree in three
-places. They are reconciled here, and the reasoning is recorded because the
-disagreements are meaningful rather than cosmetic.
-
-| Point | Diagram 1 | Diagram 2 | Diagram 3 | Reconciled |
-|---|---|---|---|---|
-| Local Analytics | branch off Enrich | inline, before Detection | absent | **Branch, fed from post-parse** |
-| Redis / Local Store | shown | absent | absent | **Present, roles separated (§08)** |
-| Detection | absent | a stage | absent | **Not a stage — see §5** |
-| Batch order | Compress→Encrypt | Compress→Encrypt | Compress→Encrypt→Batch | **Batch→Compress→Encrypt (§07)** |
-| Privacy position | after facts | after facts | after facts | **After facts, before persistence** |
-
-### 2.1 The reconciled pipeline
+LLD §4 separates the collector into three planes. This is the most useful
+structural idea in the document, because the planes have different volumes,
+different availability requirements and different security postures.
 
 ```
-  CUSTOMER ENVIRONMENT
-  ┌──────────────────────────────────────────────────────────────────┐
-  │                     OVERLOOK EDGE COLLECTOR                      │
-  │                                                                  │
-  │   CONNECTORS                                                     │
-  │   AWS · Azure · GCP · FortiGate · CrowdStrike · FortiEDR ·       │
-  │   Scalefusion · GitHub · NSX · DLP · SIEM · DB · SNMP           │
-  │        │         │          │          │                         │
-  │      PULL      PUSH      STREAM      AGENT    ← 4 ingress classes │
-  │        └─────────┴──────────┴──────────┘                         │
-  │                          ▼                                       │
-  │   ┌──────────────────────────────────────────────────────────┐  │
-  │   │ 1  INGESTION GATEWAY                                     │  │
-  │   │    auth · validate · rate limit · flow control · ACK     │  │
-  │   └──────────────────────────┬───────────────────────────────┘  │
-  │                              ▼                                   │
-  │   ┌──────────────────────────────────────────────────────────┐  │
-  │   │ 2  DURABLE EVENT BUFFER — NATS JetStream                 │  │
-  │   │    IS the journal. fsync before ack. 4 streams.          │  │
-  │   └──────────────────────────┬───────────────────────────────┘  │
-  │                              ▼                                   │
-  │   ┌──────────────────────────────────────────────────────────┐  │
-  │   │ 3  PARSER ENGINE                                         │  │
-  │   │    detect · parse · validate · normalize · quarantine    │  │
-  │   └──────────────────────────┬───────────────────────────────┘  │
-  │                              ├───────────────► 8  LOCAL ANALYTICS│
-  │                              ▼                    (reduced, 7d)  │
-  │   ┌──────────────────────────────────────────────────────────┐  │
-  │   │ 4  ENRICHMENT ENGINE          ◄──────► 8  REDIS (cache)  │  │
-  │   │    asset · identity · geo · threat · network · tags      │  │
-  │   │    ⚠ LAST STAGE THAT REQUIRES PLAINTEXT                  │  │
-  │   └──────────────────────────┬───────────────────────────────┘  │
-  │                              ▼                                   │
-  │   ┌──────────────────────────────────────────────────────────┐  │
-  │   │ 5  SECURITY FACT ENGINE       ◄──────► 8  LOCAL STORE    │  │
-  │   │    entities · relationships · findings · observations    │  │
-  │   │    merge windows · coverage windows · confidence         │  │
-  │   └──────────────────────────┬───────────────────────────────┘  │
-  │                              ▼                                   │
-  │   ┌──────────────────────────────────────────────────────────┐  │
-  │   │ 6  PRIVACY ENGINE                                        │  │
-  │   │    TOKENIZE identifiers · DROP secrets · DROP raw payload│  │
-  │   │    ⚠ NOTHING PAST THIS POINT HOLDS PLAINTEXT             │  │
-  │   └──────────────────────────┬───────────────────────────────┘  │
-  │                              ▼                                   │
-  │   ┌──────────────────────────────────────────────────────────┐  │
-  │   │ 7  METADATA FORWARDER                                    │  │
-  │   │    batch → compress → encrypt → ship · spool on failure  │  │
-  │   └──────────────────────────┬───────────────────────────────┘  │
-  └──────────────────────────────┼──────────────────────────────────┘
-                                 │ mTLS
-  ═══════════════════════════════╪═══════════════════════════════════
-                                 ▼
-                          OVERLOOK SAAS  (§09)
+  DATA PLANE          high volume, must never block, must never lose
+                      connector → gateway → NATS → parse → normalize →
+                      enrich → facts → privacy → forward
+                      LLD §4.1 · docs 01–09
+
+  CONTROL PLANE       low volume, human-facing, must be available even
+                      when the data plane is degraded
+                      local API · connector manager · vault · certs ·
+                      health · parser manager · updater
+                      LLD §4.2 · doc 10
+
+  RESPONSE PLANE      rare, high consequence, must be provably authorized
+                      signed command → validate → execute → audit
+                      LLD §4.3 · doc 11
 ```
 
-### 2.2 Two lines that matter more than the boxes
-
-```
-  THE PLAINTEXT LINE       after service 4
-    Enrichment is the last stage that needs real values — geo needs the
-    real IP, identity enrichment needs the real username, threat intel
-    needs the real hash. Privacy CANNOT move earlier than this.
-
-  THE PERSISTENCE LINE     after service 6
-    Everything that survives a restart should sit on the far side of
-    privacy. Local Analytics is the one deliberate exception, and §08
-    states what it is allowed to hold and why.
-```
+**A failure in one plane must not disable the others.** If the data plane is
+saturated, the operator must still be able to reach the UI to see why. If the
+control plane is restarting, collection must continue. If the response plane is
+compromised, it must not become a path into collection.
 
 ---
 
-## 3. The seven services and three stores
+## 3. Process architecture — a modular monolith
 
-| # | Service | Role | Stateful? |
-|---|---|---|---|
-| 1 | [Ingestion Gateway](01-ingestion-gateway.md) | Front door for four ingress classes | no |
-| 2 | [Durable Event Buffer](02-durable-event-buffer.md) | NATS JetStream — the journal | **yes, on disk** |
-| 3 | [Parser Engine](03-parser-engine.md) | Raw → structured, normalized | no (cache only) |
-| 4 | [Enrichment Engine](04-enrichment-engine.md) | Add context from caches | no (cache only) |
-| 5 | [Security Fact Engine](05-security-fact-engine.md) | Events → entities, relationships, findings | **yes, windows** |
-| 6 | [Privacy Engine](06-privacy-engine.md) | Tokenize, drop, minimize | no (key only) |
-| 7 | [Metadata Forwarder](07-metadata-forwarder.md) | Batch, compress, encrypt, ship | **yes, spool** |
-| — | [Local state and stores](08-local-state-and-stores.md) | Redis · Local Store · Local Analytics | **yes** |
-| — | [The SaaS side](09-saas-side.md) | What receives all of this | — |
+LLD §5 is explicit, and it is the right call for V1:
 
-**Process separation is a requirement, not a style.** Seven processes means the
-parser can be restarted without dropping a syslog stream, and a parser panic on
-malformed input cannot take the gateway with it. It also means each has its own
-resource budget, which is the only way a hard ceiling is enforceable.
+```
+  Linux
+  ├── overlook-collector      ONE Go binary, all modules (LLD §6)
+  ├── nats-server             JetStream
+  └── overlook-updater        signed upgrades
+
+  "Do not create separate operating-system processes for every module
+   during the initial versions."                            — LLD §5
+```
+
+```
+  WHAT THIS BUYS
+    one binary to build, sign, ship and roll back
+    in-process channel handoffs instead of broker round trips
+    one config file, one log set, one health endpoint
+    SQLite becomes correct — one writer, no contention (LLD §41)
+    a support engineer can reason about it at 3 a.m.
+
+  WHAT IT COSTS, AND MUST BE MITIGATED IN CODE
+    a panic in any module kills the whole collector.
+      → recover() at every worker-pool boundary
+      → a parser panic dead-letters the record (LLD §20) and the
+        worker continues. It does not propagate.
+    one module can starve another for CPU.
+      → the worker-pool caps in LLD §17 are the mechanism; §4 below
+        is the budget they should be set from.
+    no independent restart.
+      → hot-reload paths matter more, not less. See 03 §4.
+```
 
 ---
 
 ## 4. The resource budget
 
-Handoff §5 sets the ceiling. It does not divide it. Without a division, the
-first service to be written takes what it wants and the last one to be written
-discovers there is nothing left.
+LLD §71 sets the sizing. It does not divide it, and worker pools (LLD §17) have
+to be configured from *something*. This is that something.
 
-**Edge L — 12 vCPU / 64 GB / 1 TB, at 10,000 EPS sustained.**
+**Edge Large — 12 vCPU / 64 GB / 1 TB, at 10,000 EPS.**
 
 ### 4.1 CPU
 
 ```
-  SERVICE                  vCPU    NOTE
-  ─────────────────────────────────────────────────────────────
-  1  Ingestion Gateway      1.5    TLS termination, framing, validation
-  2  JetStream              1.0    I/O bound; fsync coordination
-  3  Parser Engine          4.0    THE HOT PATH — regex, grok, Drain
-  4  Enrichment Engine      1.0    cache lookups, memory bound
-  5  Security Fact Engine   1.0    window aggregation, extraction
-  6  Privacy Engine         0.25   HMAC-SHA256 is nearly free
-  7  Metadata Forwarder     0.5    zstd + TLS
-     Redis                  0.25
-     Local Store            0.25
-     Local Analytics        0.25   niced, capped, may be starved
-  ─────────────────────────────────────────────────────────────
-     ALLOCATED             10.0
-     OS + RESERVE           2.0    burst headroom, not spare capacity
+  MODULE                        vCPU   LLD REF
+  ─────────────────────────────────────────────────────────
+  Ingestion Manager              1.5   §6, §12
+  nats-server                    1.0   §14–16
+  Parser Workers                 3.5   §17  min 2 max 16
+  Normalization Workers          1.0   §17  min 2 max 12
+  Enrichment Workers             1.0   §17  min 2 max 8
+  Security Fact Workers          1.0   §17  min 2 max 8
+  Privacy Workers                0.25  §26
+  Forwarder Workers              0.5   §17  min 2 max 8
+  API Server + Control Plane     0.25  §46
+  Agent Gateway                  0.25  §55
+  ─────────────────────────────────────────────────────────
+  ALLOCATED                     10.25
+  OS + RESERVE                   1.75   burst headroom
 ```
 
-**Parsing is a third of the machine and that is correct.** It is the only stage
-that touches every byte of every event. Every other stage operates on
-progressively less data. If parsing is not the largest allocation, something
-upstream is doing work it should not.
+**Parsing is the largest allocation because it is the only stage that touches
+every byte of every event.** Every stage after it operates on less data. If
+parsing is not the biggest number, something upstream is doing work it should
+not.
 
 ### 4.2 Memory
 
 ```
-  SERVICE                   RAM    HOLDS
-  ─────────────────────────────────────────────────────────────
-  1  Ingestion Gateway      2 GB   connection buffers, TLS sessions
-  2  JetStream              4 GB   in-flight messages + stream index
-  3  Parser Engine          8 GB   compiled parsers, LILAC cache, batches
-  4  Enrichment Engine      4 GB   working set
-  5  Security Fact Engine  12 GB   MERGE AND COVERAGE WINDOWS ← the big one
-  6  Privacy Engine         1 GB   token cache, sealed key material
-  7  Metadata Forwarder     2 GB   outbound batch buffers
-     Redis                 12 GB   asset · identity · geo · TI caches
-     Local Store            4 GB   Postgres shared buffers
-     Local Analytics        6 GB   DuckDB query memory, HARD CAPPED
-  ─────────────────────────────────────────────────────────────
-     ALLOCATED             55 GB
-     OS + page cache        9 GB
+  MODULE                         RAM   HOLDS
+  ─────────────────────────────────────────────────────────
+  Ingestion Manager             2 GB   connection buffers, TLS
+  nats-server                   6 GB   in-flight + stream indexes
+  Parser Workers                8 GB   parser registry, batches
+  Normalization Workers         4 GB   schema maps, in-flight
+  Enrichment Workers           14 GB   THE CACHES — see §4.4
+  Security Fact Workers        12 GB   aggregation + dedup windows
+  Privacy Workers               1 GB   policy, key material
+  Forwarder Workers             2 GB   batch buffers
+  Control + Agent Gateway       1 GB
+  ─────────────────────────────────────────────────────────
+  ALLOCATED                    50 GB
+  OS + page cache              14 GB
 ```
 
-The Fact Engine and Redis together are 37% of memory, and both are windows over
-recent data. **Both must be bounded by policy rather than by available RAM**, or
-the collector's memory use becomes a function of the customer's estate size and
-the ceiling stops being a ceiling.
+Enrichment caches and fact windows are 52% of memory and both are *windows over
+recent data*. **Both must be bounded by configuration, not by available RAM**, or
+the collector's memory becomes a function of the customer's estate size and
+LLD §71 stops being a sizing table.
 
 ### 4.3 Disk — and the number that governs everything
 
 ```
-  ALLOCATION                    SIZE    NOTE
-  ─────────────────────────────────────────────────────────────
-  OS + binaries + logs          40 GB
-  JetStream retention          200 GB   ← see below
-  Local Store (Postgres)       100 GB
-  Local Analytics (Parquet)    300 GB   7 days, reduced, not raw
-  Evidence (handoff §25)        50 GB   14 days, hash + excerpt
-  Outbound spool               100 GB   facts only — small, and post-merge
-  ─────────────────────────────────────────────────────────────
+  ALLOCATION                    SIZE   LLD REF
+  ─────────────────────────────────────────────────────────
+  OS + binaries + logs          40 GB  §66, §70 (logs 30 d)
+  NATS OVERLOOK_RAW            420 GB  §15, §69 queue.max_disk_gb
+  NATS OVERLOOK_FORWARD         60 GB  §15, §70 (facts 72 h)
+  Dead letter                   30 GB  §70 (7 days)
+  SQLite state                  40 GB  §41
+  Encrypted spool              200 GB  §29, §35
+  ─────────────────────────────────────────────────────────
   ALLOCATED                    790 GB
-  FREE / RESERVE               210 GB   a hard ceiling needs real slack
+  FREE / RESERVE               234 GB  a hard ceiling needs real slack
 ```
 
-**JetStream retention is the most consequential number in the collector.**
+```
+  RAW RETENTION IS AN SLA, NOT A SETTING.
+
+   5,000 EPS × ~1 KB  =  5 MB/s  =  18 GB/hour
+  10,000 EPS × ~1 KB  = 10 MB/s  =  36 GB/hour
+
+  420 GB of RAW therefore buys
+
+    at  5,000 EPS   ~23 hours   ← LLD §69 raw_hours: 24 is reachable
+    at 10,000 EPS   ~11.6 hours ← it is NOT. See escalation ESC-2.
+
+  STATE IT AS A COMMITMENT:
+  "this collector tolerates an N-hour processing outage with zero loss."
+```
+
+**⚠ This allocation assumes ESC-1 is accepted.** LLD §15/§16 also persist
+PARSED, NORMALIZED and ENRICHED to disk, which at 6 hours adds ~842 GB and does
+not fit. See [13-escalations.md](13-escalations.md).
+
+### 4.4 The pressure levels these numbers feed
+
+LLD §37 defines four levels. The thresholds are only meaningful against a budget.
 
 ```
-   5,000 EPS × ~1 KB  =  5 MB/s  =  18 GB/hour  =  432 GB/day
-  10,000 EPS × ~1 KB  = 10 MB/s  =  36 GB/hour  =  864 GB/day
+  GREEN    queue < 50% · CPU < 70% · disk < 70%      normal
+  YELLOW   queue 50–75%                              scale workers up
+  ORANGE   queue 75–90%                              throttle low priority
+  RED      queue > 90%                               protect P0/P1 only
 
-  200 GB of retention therefore buys
+  and the priority ladder that governs shedding (LLD §38)
 
-    at  5,000 EPS   ~11 hours
-    at 10,000 EPS   ~5.5 hours
-    at 20,000 EPS   ~2.8 hours   ← and you are over the Edge L target
-
-  THAT NUMBER IS NOT A CONFIG DETAIL. IT IS AN SLA:
-  "the collector survives a N-hour parser outage with zero data loss."
+  P0  critical incident / response telemetry    NEVER discard
+  P1  security alerts                           NEVER discard
+  P2  configuration / posture findings          buffer
+  P3  inventory / informational                 throttle
+  P4  debug / verbose                           sample or discard
 ```
 
-Retention has to be expressed in **hours**, not days, because JetStream buffers
-**raw** events — the highest-volume form the data ever takes. A default of
-"7 days" would need 6 TB and the ceiling is 1 TB. See `02 §5`.
+Every ingress class maps onto this differently, and the mapping is where data is
+actually lost or saved — see `01 §4`.
 
 ---
 
-## 5. What the collector does NOT do
-
-Two exclusions, and the reason each matters.
+## 5. The pipeline, and where each document sits
 
 ```
-  ✕  ATTACK PATHS · RISK SCORING · THE GRAPH · CORRELATION
-     handoff §3.2 — SaaS. Not a preference; permission closure and
-     path traversal need a whole-estate view no single collector has.
-
-  ✕  DETECTION
-     Diagram 2 lists "Detection" as a stage. It is not carried into
-     the reconciled pipeline, for two reasons:
-
-       1  BUDGET     rules plus tuning plus possible ML does not fit
-                     the 1.0 vCPU the Fact Engine has, and there is
-                     nowhere to take it from.
-       2  POSITION   detection is Stellar Cyber's ground and they have
-                     a detection research team. Overlook is exposure.
-                     ../07-competitive-landscape.md is the long form.
-
-     ⚠ NEEDS A DECISION. If "Findings" in the Security Fact Engine
-       means EXPOSURE findings — a misconfigured trust policy, an
-       over-broad OIDC subject, an unrotated key — then there is no
-       disagreement and this note is moot. If it means DETECTIONS,
-       it is a scope change with a resource cost and belongs in an
-       ADR before Phase 1.
+  CUSTOMER ENVIRONMENT
+  ┌────────────────────────────────────────────────────────────────┐
+  │                    overlook-collector                          │
+  │                                                                │
+  │   CONNECTORS   AWS · Azure · GCP · FortiGate · EDR · GitHub ·  │
+  │                DB · Syslog · REST · Webhook · Agent   (LLD §12)│
+  │                            │                                   │
+  │                            ▼                                   │
+  │   ┌────────────────────────────────────────────────────────┐  │
+  │   │ INGESTION GATEWAY                          doc 01      │  │
+  │   │ auth · validation · rate limit · flow control          │  │
+  │   └────────────────────────┬───────────────────────────────┘  │
+  │                            ▼                                   │
+  │   ┌────────────────────────────────────────────────────────┐  │
+  │   │ NATS JETSTREAM  OVERLOOK_RAW               doc 02      │  │
+  │   │ file-backed · fsync before ack                         │  │
+  │   └────────────────────────┬───────────────────────────────┘  │
+  │                            ▼                                   │
+  │   ┌────────────────────────────────────────────────────────┐  │
+  │   │ PARSER ENGINE                              doc 03      │  │
+  │   │ detect · select · parse · dead-letter                  │  │
+  │   └────────────────────────┬───────────────────────────────┘  │
+  │                            ▼                                   │
+  │   ┌────────────────────────────────────────────────────────┐  │
+  │   │ NORMALIZATION ENGINE                       doc 04      │  │
+  │   │ vendor fields → the common schema (LLD §21)            │  │
+  │   └────────────────────────┬───────────────────────────────┘  │
+  │                            ▼                                   │
+  │   ┌────────────────────────────────────────────────────────┐  │
+  │   │ ENRICHMENT ENGINE                          doc 05      │  │
+  │   │ asset · identity · cloud · network · app · threat      │  │
+  │   │ ⚠ LAST STAGE THAT REQUIRES PLAINTEXT                   │  │
+  │   └────────────────────────┬───────────────────────────────┘  │
+  │                            ▼                                   │
+  │   ┌────────────────────────────────────────────────────────┐  │
+  │   │ SECURITY FACT ENGINE                       doc 06      │  │
+  │   │ facts · entities · relationships (LLD §23–25)          │  │
+  │   └────────────────────────┬───────────────────────────────┘  │
+  │                            ▼                                   │
+  │   ┌────────────────────────────────────────────────────────┐  │
+  │   │ PRIVACY ENGINE                             doc 07      │  │
+  │   │ remove payload · remove secrets · minimize (LLD §26–27)│  │
+  │   │ ⚠ NOTHING PAST HERE HOLDS PLAINTEXT                    │  │
+  │   └────────────────────────┬───────────────────────────────┘  │
+  │                            ▼                                   │
+  │   ┌────────────────────────────────────────────────────────┐  │
+  │   │ FORWARDER               batch → zstd → AES-GCM  doc 08 │  │
+  │   └────────────────────────┬───────────────────────────────┘  │
+  │                            │ mTLS                              │
+  │   SQLite · spool · dead letter                 doc 09         │
+  │   control plane: API · UI · vault · certs      doc 10         │
+  │   response plane: agent gateway · commands     doc 11         │
+  └────────────────────────────┼───────────────────────────────────┘
+                               ▼
+                       OVERLOOK SAAS                    doc 12
 ```
 
 ---
 
-## 6. The reduction cascade
+## 6. The documents
 
-Everything about the collector's economics falls out of this table. It is the
-reason the collector exists at all, rather than shipping logs to a cloud lake.
+| # | Doc | LLD sections |
+|---|---|---|
+| 01 | [Ingestion Gateway](01-ingestion-gateway.md) | §12, §13, §36–39 |
+| 02 | [Durable Event Buffer](02-durable-event-buffer.md) | §14–16, §69, §70 |
+| 03 | [Parser Engine](03-parser-engine.md) | §18–20 |
+| 04 | [Normalization Engine](04-normalization-engine.md) | §21 |
+| 05 | [Enrichment Engine](05-enrichment-engine.md) | §22, §40 |
+| 06 | [Security Fact Engine](06-security-fact-engine.md) | §23–25, §81 |
+| 07 | [Privacy Engine](07-privacy-engine.md) | §26, §27 |
+| 08 | [Forwarder](08-forwarder.md) | §28–35 |
+| 09 | [Local State and Storage](09-local-state-and-storage.md) | §41–45, §70 |
+| 10 | [Control Plane](10-control-plane.md) | §46–54, §63–69, §74 |
+| 11 | [Response Plane](11-response-plane.md) | §55–59 |
+| 12 | [The SaaS Side](12-saas-side.md) | §76–81 |
+| 13 | [Escalations](13-escalations.md) | — |
+
+---
+
+## 7. The reduction cascade
+
+Why the collector exists at all, rather than shipping logs to a cloud lake. This
+is LLD §88 expressed as arithmetic.
 
 ```
-  ONE EDGE L COLLECTOR AT 10,000 EPS
+  ONE EDGE LARGE COLLECTOR AT 10,000 EPS
 
   STAGE                          VOLUME/DAY     SURVIVING
   ────────────────────────────────────────────────────────
   raw at the gateway                864 GB        100%
   after parse (structured)        1,037 GB        120%   ← grows
+  after normalization             1,037 GB        120%
   after noise filter                260 GB         30%
-  after dedup                        90 GB         10.4%
-  facts extracted                   2.1 GB          0.24%  ← the drop
-  after merge windows               180 MB          0.021%
+  after dedup (LLD §40)              90 GB         10.4%
+  facts + entities + relations      2.1 GB          0.24%
+  after aggregation                 180 MB          0.021%
   compressed on the wire             45 MB          0.005%
 
   864 GB  →  45 MB     ≈  19,000 : 1
 ```
 
-Two observations that are easy to miss:
+**Parsing makes the data bigger.** Structured JSON with named fields is ~20%
+larger than the raw line. Any sizing estimate assuming parsing reduces volume is
+wrong, and it is wrong at exactly the stage where memory is tightest. This is
+also the arithmetic behind ESC-1.
 
-**Parsing makes the data bigger.** Structured JSON with normalized field names
-is ~20% larger than the raw line. Every sizing estimate that assumes parsing
-reduces volume is wrong, and it is wrong at the exact stage where memory is
-tightest.
-
-**The real drop is fact extraction, not compression.** Going from events to
-entities-and-relationships is a 40:1 reduction on its own, because ten thousand
-authentication events describe *one* relationship. Compression only contributes
-the last 4:1. A design that ships events and compresses them hard is not the
-same architecture with a worse constant — it is three orders of magnitude
-different.
+**The real drop is fact extraction, not compression.** Ten thousand
+authentication events describe *one* relationship. Compression contributes only
+the final 4:1.
 
 ---
 
-## 7. Meridian, as the series will use it
+## 8. Meridian, the recurring example
 
 Continuing `../12-end-to-end-deployment-story.md`.
 
 ```
   MERIDIAN FINANCIAL — 4 COLLECTORS
+  (four, because of LLD §71's ceiling — scale out, not up)
 
-  COL-mer-01   Edge L    datacentre    FortiGate · Palo Alto · NSX
-                                       ~11,000 EPS   mostly STREAM
-  COL-mer-02   Edge L    datacentre    CrowdStrike · FortiEDR ·
-                                       Scalefusion    ~9,000 EPS
-  COL-mer-03   Edge L    DMZ           AWS · GCP · GitHub · DLP
-                                       ~14,000 EPS   mostly PULL
-  COL-mer-04   Edge M    branch/OT     syslog, SNMP    ~2,000 EPS
+  COL-mer-01   Large    datacentre   FortiGate · Palo Alto · NSX
+                                     ~11,000 EPS   mostly syslog
+  COL-mer-02   Large    datacentre   CrowdStrike · FortiEDR ·
+                                     Scalefusion   ~9,000 EPS
+  COL-mer-03   Large    DMZ          AWS · GCP · GitHub · DLP
+                                     ~14,000 EPS   mostly API poll
+  COL-mer-04   Medium   branch/OT    syslog · SNMP   ~2,000 EPS
 
-  TOTAL ~36,000 EPS · 2.9M entities · 2.9M live edges
+  TOTAL ~36,000 EPS · 2.9M entities · 2.9M relationships
   47 crown jewels · 12,000 identities · 2,100 service accounts
 ```
-
-The 12/64/1 TB ceiling is why there are four and not one. `COL-mer-03` carries
-the most EPS but the least raw volume, because PULL sources arrive already
-structured — which is the whole argument of `../08-connector-benchmark-and-alignment.md`
-restated in deployment terms.
-
----
-
-## 8. Reading order
-
-The series is written in dependency order and each document ends by linking to
-the next. If you are reading one document only, read
-[Security Fact Engine](05-security-fact-engine.md) — it is where the product
-actually happens.
 
 ---
 

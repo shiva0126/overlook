@@ -8,6 +8,16 @@
 
 ---
 
+> **⚠ ALIGNED TO THE LOW LEVEL DESIGN.**
+> `../LLD-edge-collector-v1.0.md` is the implementation boundary and takes
+> precedence over this document. It supersedes
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` for collector internals.
+> Content here that extends the LLD is a **PROPOSED EXTENSION**.
+> Open escalations: `../edge-collector/13-escalations.md`.
+> Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+
+---
+
 ## 1. What "AI collector" means in Overlook
 
 An AI collector is not one thing.

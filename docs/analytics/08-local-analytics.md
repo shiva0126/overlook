@@ -4,12 +4,19 @@
 
 ---
 
-> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
-> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
-> boundary and takes precedence over this document. Content here that
-> extends the handoff is a **PROPOSED EXTENSION** requiring review under
-> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> **⚠ ALIGNED TO THE LOW LEVEL DESIGN.**
+> `../LLD-edge-collector-v1.0.md` is the implementation boundary and takes
+> precedence over this document. It supersedes
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` for collector internals.
+> Content here that extends the LLD is a **PROPOSED EXTENSION**.
+> Open escalations: `../edge-collector/13-escalations.md`.
 > Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+>
+> **RECONCILED WITH THE LLD.**
+> Local analytics is **Phase 3** in LLD §84 and is not built in V1. When it
+> arrives it must be a reduced, tokenized projection (~14 B/event columnar,
+> 7 days) and starvable under load — not the 30-day parsed dataset described
+> here, which does not fit the 1 TB ceiling.
 
 ---
 

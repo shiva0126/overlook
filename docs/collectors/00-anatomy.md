@@ -7,12 +7,18 @@
 
 ---
 
-> **⚠ ALIGNED TO THE ENGINEERING HANDOFF.**
-> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` is the implementation
-> boundary and takes precedence over this document. Content here that
-> extends the handoff is a **PROPOSED EXTENSION** requiring review under
-> handoff §25.3 / §35.1. Open escalations: `01-system-design.md` §41.
+> **⚠ ALIGNED TO THE LOW LEVEL DESIGN.**
+> `../LLD-edge-collector-v1.0.md` is the implementation boundary and takes
+> precedence over this document. It supersedes
+> `Overlook_Edge_Collector_Engineering_Handoff_v1.1` for collector internals.
+> Content here that extends the LLD is a **PROPOSED EXTENSION**.
+> Open escalations: `../edge-collector/13-escalations.md`.
 > Hard ceiling: **12 vCPU / 64 GB / 1 TB per collector — scale out, not up.**
+>
+> **RECONCILED WITH THE LLD.**
+> Collectors are **modules inside one Go binary** (LLD §5, §6), reached
+> through the `Connector` interface in LLD §10 and configured per LLD §11.
+> Checkpoints live in SQLite (LLD §44).
 
 ---
 
